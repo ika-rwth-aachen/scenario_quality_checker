@@ -1,0 +1,77 @@
+# Third-Party Licenses
+
+This project includes the following third-party dependencies and to some extent files. Each is used unmodified. The original licenses apply.
+
+---------------------------------------------------------------
+Additional third-party assets included in this repository:
+
+---------------------------------------------------------------
+
+1. fpdf2
+- License: GNU Lesser General Public License v3
+- Source: https://pypi.org/project/fpdf2/ 
+
+---------------------------------------------------------------
+
+2. loguru
+- License: MIT license
+- Source: https://pypi.org/project/loguru/
+
+---------------------------------------------------------------
+
+3. matplotlib
+- License: Python Software Foundation License
+- Source: https://pypi.org/project/matplotlib/
+
+---------------------------------------------------------------
+
+4. NumPy
+- License: BSD 3-Clause License
+- Source: https://pypi.org/project/numpy/
+
+---------------------------------------------------------------
+
+5. Pandas
+- License: BSD License (BSD 3-Clause License) 
+- Source: https://pypi.org/project/pandas/
+
+---------------------------------------------------------------
+
+6. scenariogeneration
+- License: Mozilla Public License 2.0
+- Source: https://pypi.org/project/scenariogeneration/
+
+---------------------------------------------------------------
+
+7. Scipy
+- License: BSD License 
+- Source: https://pypi.org/project/scipy/ 
+
+---------------------------------------------------------------
+
+8. Shapely
+- License: BSD License (BSD 3-Clause)
+- Source: https://pypi.org/project/shapely/
+
+---------------------------------------------------------------
+
+9. typer
+- License: MIT license
+- Source: https://pypi.org/project/typer/
+
+---------------------------------------------------------------
+
+10. xmlschema
+- License: MIT license
+- Source: https://pypi.org/project/xmlschema/
+
+---------------------------------------------------------------
+
+11. ASAM OpenSCENARIO XSD schemas (files in `schemas/`)
+- License: ASAM license terms
+- Source: https://www.asam.net/standards/detail/openscenario/
+
+---------------------------------------------------------------
+
+This file is provided for informational purposes and to assist in license compliance.
+
