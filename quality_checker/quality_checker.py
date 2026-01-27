@@ -27,6 +27,13 @@ app = typer.Typer()
 
 class FileQualityChecker:
     def __init__(self, scenario_path, schema_path, print_log=False):
+        """
+        Initialize the checker and run the full validation pipeline.
+        Args:
+            scenario_path: Path to the .xosc scenario file.
+            schema_path: Path to the directory with XSD schemas.
+            print_log: Whether to emit log output.
+        """
         self.file_path = scenario_path
         self.print_log = print_log
         
@@ -43,38 +50,46 @@ class FileQualityChecker:
         if self.print_log:
             logger.info(f'Starting analysis of {self.file_path}')
         
+        # Parse XML early to avoid downstream schema/scenario errors.
         self.xml_loadable = self.is_xml_loadable()
         if not self.xml_loadable:
             return
         elif self.print_log == True:
             logger.info('XML is loadable')
 
+        # Validate against the matching OpenSCENARIO XSD.
         self.xsd_valid, self.version = self.is_xsd_valid(schema_path)
         if not self.xsd_valid:
             return
         elif print_log == True:
             logger.info('XSD is valid')
             
-        # check if scenario can be parsed with scenariogeneration correctly
+        # Parse with scenariogeneration to access scenario structure.
         self.scenario = self.load_openscenario()
         
         if self.scenario is None:
             return
         
-        # check if scenario can be parsed with scenariogeneration correctly
+        # Metadata is read from the parsed scenario header.
         self.author = self.scenario.header.get_attributes()['author']
         self.date = self.get_date()
 
-        # check validity of scenario with scenariogeneration
-        # file errors
+        # File-level checks (entities, init positions, intersections, add/remove).
         entities, self.file_errors = self.check_file_errors()
         self.road_user_counts = Counter(entities.values())
         self.road_user_counts['total'] = str(len(entities))
         
-        # physical errors
+        # Dynamic checks (acceleration and swim angle thresholds).
         self.dynamic_errors = self.check_dynamic_errors()           
             
     def to_summary_row(self):
+        """
+        Return a compact summary tuple for aggregated reports.
+        Args:
+            None
+        return: Tuple of (file_path, xml_loadable, xsd_valid, n_file_errors, n_dynamic_errors)
+        """
+        # Keep values stable even when earlier stages failed.
         if not self.xml_loadable:
             return (self.file_path, False, False, '-', '-')
 
@@ -90,6 +105,7 @@ class FileQualityChecker:
             file_error_count = '-'
 
         try:
+            # Default to empty lists when dynamic errors are missing.
             dynamic_error_groups = self.dynamic_errors or ([], [], [], [])
             dynamic_error_count = sum(len(items) for items in dynamic_error_groups)
         except Exception:
@@ -99,7 +115,10 @@ class FileQualityChecker:
 
     def is_xml_loadable(self):
         """
-        check if file is a valid xml
+        Check whether the file can be parsed as XML.
+        Args:
+            None
+        return: True if the file parses as XML, otherwise False.
         """
         parser = make_parser()
         parser.setContentHandler(ContentHandler())
@@ -110,34 +129,41 @@ class FileQualityChecker:
             return False
         
     def is_xsd_valid(self, schema_path):
-            """
-            check if file follows an available xsd schema
-            """
-            tree = ET.parse(self.file_path)
-            root = tree.getroot()
+        """
+        Check whether the file validates against an available XSD schema.
+        Args:
+            schema_path: Path to the directory with XSD schemas.
+        return: (is_valid, xsd_version)
+        """
+        tree = ET.parse(self.file_path)
+        root = tree.getroot()
 
-            revMajor = root[0].attrib['revMajor']
-            revMinor = root[0].attrib['revMinor']
-            xsd_version = revMajor + '-' + revMinor
-            
-            if int(revMajor) < 2:
-                file = Path('OpenSCENARIO_' + xsd_version + '.xsd')
-                schema_file = schema_path / file
-            else: 
-                # print('File version ' + xsd_version + ' is NOT known')
-                return (False, xsd_version)
-            
-            if not os.path.isfile(schema_file):
-                # print('Schema file for version ' + xsd_version + ' is NOT available')
-                return (False, xsd_version)
-            
-            xsd = xmlschema.XMLSchema(schema_file)
+        revMajor = root[0].attrib['revMajor']
+        revMinor = root[0].attrib['revMinor']
+        xsd_version = revMajor + '-' + revMinor
+        
+        # Schema files exist for v1.x only; v2+ is treated as unsupported here.
+        if int(revMajor) < 2:
+            file = Path('OpenSCENARIO_' + xsd_version + '.xsd')
+            schema_file = schema_path / file
+        else: 
+            # print('File version ' + xsd_version + ' is NOT known')
+            return (False, xsd_version)
+        
+        if not os.path.isfile(schema_file):
+            # print('Schema file for version ' + xsd_version + ' is NOT available')
+            return (False, xsd_version)
+        
+        xsd = xmlschema.XMLSchema(schema_file)
 
-            return (xsd.is_valid(self.file_path), xsd_version)     
+        return (xsd.is_valid(self.file_path), xsd_version)     
         
     def load_openscenario(self):
         """
-        Load an OpenSCENARIO file (.xosc)
+        Load an OpenSCENARIO file (.xosc) via scenariogeneration.
+        Args:
+            None
+        return: Parsed scenariogeneration object or None on failure.
         """
         temp_file = self._process_xosc_file()
         try:
@@ -148,7 +174,10 @@ class FileQualityChecker:
 
     def _process_xosc_file(self):
         """
-        Process the file, create _temp version, replace parameters, and return temp filename.
+        Create a temp .xosc with parameter placeholders resolved.
+        Args:
+            None
+        return: Path to the temporary .xosc file.
         """
         parameters = self._load_parameter_declarations_outside_storyboard()
 
@@ -164,6 +193,8 @@ class FileQualityChecker:
     def _clean_up_temp_file(self, temp_file):
         """
         Delete the temporary file after processing.
+        Args:
+            temp_file: Path to the temporary file.
         """
         temp_path = Path(temp_file)
         if temp_path.exists():
@@ -172,7 +203,10 @@ class FileQualityChecker:
     
     def get_date(self):
         """
-        extracts date from file header
+        Extract scenario date from the file header (if present).
+        Args:
+            None
+        return: Date string in DD.MM.YYYY format or None.
         """
         tree = ET.parse(self.file_path)
         root = tree.getroot()
@@ -186,7 +220,10 @@ class FileQualityChecker:
     
     def check_file_errors(self):
         """
-        Checks if file contains entity handling errors.
+        Check for entity definition, init, and intersection issues.
+        Args:
+            None
+        return: (entities_dict, file_errors_tuple)
         """
         entities = self._get_entities()
         entity_names = list(entities.keys())
@@ -203,7 +240,10 @@ class FileQualityChecker:
     
     def check_dynamic_errors(self):   
         """
-        Checks if the scenario contains dynamic errors.
+        Check for acceleration and swim angle threshold violations.
+        Args:
+            None
+        return: (acceleration_errors, acceleration_warnings, swimangle_errors, swimangle_warnings)
         """
         acceleration_errors = []
         acceleration_warnings = []
@@ -246,7 +286,10 @@ class FileQualityChecker:
     
     def _get_dynamic_data(self):
         """
-        returns positions and times from scenario for every actor
+        Return positions and times for each actor's trajectory events.
+        Args:
+            None
+        return: Dict mapping entity name to (positions, times).
         """
         dynamic_data = {}
         for story in self.scenario.storyboard.stories:
@@ -266,7 +309,12 @@ class FileQualityChecker:
         return dynamic_data
 
     def _load_parameter_declarations_outside_storyboard(self):
-        """Extract parameter declarations, excluding any inside Storyboard."""
+        """
+        Extract parameter declarations, excluding any inside Storyboard.
+        Args:
+            None
+        return: Dict of parameter name to value.
+        """
         tree = ET.parse(self.file_path)
         root = tree.getroot()
 
@@ -289,14 +337,25 @@ class FileQualityChecker:
 
     @staticmethod
     def _replace_parameters_in_content(content, parameters):
-        """Replace all $param$ placeholders with actual parameter values."""
+        """
+        Replace all $param$ placeholders with actual parameter values.
+        Args:
+            content: XML content as a string.
+            parameters: Dict of parameter name to value.
+        return: Updated content string.
+        """
         for name, value in parameters.items():
             placeholder = f'${name}'
             content = content.replace(placeholder, value)
         return content
 
     def _are_actors_defined(self, entity_names):
-        """Check if storyboard entities have been defined."""
+        """
+        Check if storyboard entities have been defined.
+        Args:
+            entity_names: List of entities defined in the scenario.
+        return: List of missing entity definitions.
+        """
         missing_entity_definitions = []
 
         for story in self.scenario.storyboard.stories:
@@ -323,7 +382,13 @@ class FileQualityChecker:
         return list(set(missing_entity_definitions))
 
     def _get_entities(self):
-        """Gather entity names."""
+        """
+        Gather entity names.
+        Args:
+            None
+        return: Dict of entity name to type (or None if unavailable).
+        """
+        # Prefer typed vehicle info when available, fall back to names only.
         entities = {}
 
         try:
@@ -335,7 +400,13 @@ class FileQualityChecker:
             return dict.fromkeys(entity_list)
 
     def _get_initial_positions(self, entity_names):
-        """Check if entity has init position and if entity is parked."""
+        """
+        Check if entity has init position and if entity is parked.
+        Args:
+            entity_names: List of entity names to inspect.
+        return: (init_positions_dict, parked_entities_list)
+        """
+        # Position is taken from TeleportAction; parked if speed is ~0.
         init_positions = {}
         parked_entities = []
         for entity in entity_names:
@@ -358,7 +429,13 @@ class FileQualityChecker:
 
     @staticmethod
     def _get_identical_initposition_entities(init_positions):
-        """Check for identical initial positions."""
+        """
+        Check for identical initial positions.
+        Args:
+            init_positions: Dict of entity name to (x, y).
+        return: List of entity groups with identical positions.
+        """
+        # Detect duplicate positions by counting identical tuples.
         identical_position_entities = []
 
         if len(set(init_positions.values())) != len(init_positions.values()):
@@ -383,7 +460,14 @@ class FileQualityChecker:
         return identical_position_entities
 
     def _get_intersecting_entities(self, init_positions, filter_by_radius=True):
-        """Check if entities intersect using initial positions and bounding boxes."""
+        """
+        Check if entities intersect using initial positions and bounding boxes.
+        Args:
+            init_positions: Dict of entity name to (x, y).
+            filter_by_radius: Whether to prefilter by max radius.
+        return: List of intersecting entity pairs.
+        """
+        # Optional radius-based prefilter to reduce pairwise polygon checks.
         intersecting_entites = []
 
         polygons, max_entity_radius = self._get_entities_bbox(init_positions)
@@ -414,7 +498,13 @@ class FileQualityChecker:
         return intersecting_entites
 
     def _get_entities_bbox(self, init_positions):
-        """Get entities' corners and create polygons with them."""
+        """
+        Get entities' corners and create polygons with them.
+        Args:
+            init_positions: Dict of entity name to (x, y).
+        return: (polygons_list, max_entity_radius)
+        """
+        # Bounding boxes are defined in the scenario object geometry.
         polygons = []
         max_entity_radius = -np.inf
 
@@ -441,7 +531,13 @@ class FileQualityChecker:
         return polygons, max_entity_radius
 
     def _get_added_and_removed_entities(self):
-        """Look for add and remove events in every maneuver group."""
+        """
+        Look for add and remove events in every maneuver group.
+        Args:
+            None
+        return: (added_entities_list, removed_entities_list)
+        """
+        # Events are inferred by name convention (Add_/Remove_).
         added_entities = []
         removed_entities = []
 
@@ -473,7 +569,16 @@ class FileQualityChecker:
 
     @staticmethod
     def _check_in_out_entities(init_positions, parked_entities, added_entities, removed_entities):
-        """Check if initialized + added equals removed + parked."""
+        """
+        Check if initialized + added equals removed + parked.
+        Args:
+            init_positions: Dict of entity name to init position.
+            parked_entities: List of entities considered parked.
+            added_entities: List of entities added via events.
+            removed_entities: List of entities removed via events.
+        return: List of missing entities.
+        """
+        # The accounting should balance; otherwise report missing entities.
         if set(added_entities).intersection(set(list(init_positions.keys()))):
             logger.warning("Entities appear both in init positions and Add_ events.")
         if set(removed_entities).intersection(set(parked_entities)):
@@ -491,7 +596,14 @@ class FileQualityChecker:
 
     @staticmethod
     def _build_dynamic_data_df(positions, times):
-        """Build a dataframe of positions and times."""
+        """
+        Build a dataframe of positions and times.
+        Args:
+            positions: List of position objects.
+            times: List of timestamps.
+        return: Pandas DataFrame with time, x, y, h.
+        """
+        # Extract x/y/h fields for vectorized downstream calculations.
         xs = []
         ys = []
         hs = []
@@ -509,7 +621,13 @@ class FileQualityChecker:
 
     @staticmethod
     def _calculate_acceleration_swimangle(df):
-        """Calculate acceleration and swim angle at every time step."""
+        """
+        Calculate acceleration and swim angle at every time step.
+        Args:
+            df: DataFrame with time, x, y, h columns.
+        return: DataFrame with added speed, acceleration, and swimangle columns.
+        """
+        # Derived values are finite differences across the trajectory.
         steps = 1
 
         t_change = df.time[steps:].reset_index(drop=True) - df.time[:-steps].reset_index(drop=True)
@@ -533,11 +651,23 @@ class FileQualityChecker:
         return df
     
     def create_single_report(self, title, out_path):
+        """
+        Generate a PDF report for the current scenario.
+        Args:
+            title: Title for the report.
+            out_path: Output directory for the PDF.
+        """
         create_report_single(self, title, out_path)
         if self.print_log:
             logger.info(f'Report created: {out_path}')
 
     def create_csv(self, name, out_path):
+        """
+        Write a CSV report with metadata, file errors, and dynamics.
+        Args:
+            name: Base filename for the CSV.
+            out_path: Output directory for the CSV.
+        """
         csv_file = out_path / Path(name + '.csv')
         with open(csv_file, mode="w", newline="") as file:
             writer = csv.writer(file)
@@ -594,12 +724,21 @@ def quality_check_single(
     out_csv: bool = typer.Option(False),
     print_log: bool = typer.Option(False)): 
     """
-    checks the quality of the scenario and creates a report summarizing it
+    Check a single scenario and optionally output PDF/CSV reports.
+    Args:
+        file_path: Path to the scenario file.
+        out_path: Output directory for reports.
+        schema_path: Path to schema files.
+        out_pdf: Whether to create a PDF report.
+        out_csv: Whether to create a CSV report.
+        print_log: Whether to emit log output.
+    return: FileQualityChecker instance.
     """
     
+    # Run analysis for one file.
     fqc = FileQualityChecker(file_path, schema_path, print_log)
     
-    # create report (pdf and/or csv)
+    # Create report (pdf and/or csv).
     if out_pdf:
         report_title = 'Summary of ' + fqc.file_path.name
         fqc.create_single_report(report_title, out_path)
@@ -621,15 +760,27 @@ def quality_check_multiple(
     out_csv: bool = typer.Option(False),
     print_log: bool = typer.Option(False)): 
     """
-    checks the quality of multiple scenarios and creates reports summarizing it
+    Check multiple scenarios and optionally output reports.
+    Args:
+        files_path: Directory containing .xosc files.
+        out_path: Output directory for reports.
+        schema_path: Path to schema files.
+        single: Whether to generate single reports per file.
+        aggregated: Whether to generate an aggregated report.
+        out_pdf: Whether to create a PDF report.
+        out_csv: Whether to create a CSV report.
+        print_log: Whether to emit log output.
+    return: Aggregated summary list or -1 on invalid input.
     """
     if print_log:
         logger.info(f'Starting analysis of all .xosc files in {files_path}')
     
+    # Ensure we have a directory to scan for .xosc files.
     if not files_path.is_dir():
         logger.error('Files path is not a directory')
         return -1
         
+    # Collect per-file checkers when aggregation is requested.
     aggregated_checkers = [] if aggregated else None
     for file in files_path.glob('*.xosc'):
         if single:
@@ -649,6 +800,7 @@ def quality_check_multiple(
         if out_pdf:
             create_report_multiple(title, information_summary, out_path, print_log)
         if out_csv:
+            # Prepend a header row for CSV export.
             information_summary.insert(0, ['scenario_file', 'xml_loadable', 'xsd_valid', 'n_file_errors', 'n_dynamic_errors'])
             csv_file = out_path / Path('aggregate_data.csv')
             with open(csv_file, mode="w", newline="") as file:
