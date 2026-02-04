@@ -1,4 +1,7 @@
 # scenario-quality-checker
+
+<img src="assets\scenario_quality_checker.png" width="400px" style="margin: 10px;">
+
 Analyze ASAM OpenSCENARIO `.xosc` files for structural, schema, and motion issues, then generate PDF and CSV reports for single files or batches. The tool is designed for scenario authors and reviewers who need a quick, repeatable way to validate scenarios and spot common mistakes before simulation.
 
 ## What it does
