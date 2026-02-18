@@ -239,8 +239,12 @@ def create_report_single(checker, title, out_path):
                     pdf.create_image(temp_dir_path / 'speed_plot.png', relative_position=[85, -12], size=(int(588/6), int(432/6)))
                     pdf.create_image(temp_dir_path / 'acceleration_plot.png', relative_position=[-10, 60], size=(int(588/6), int(432/6)))
                     pdf.create_image(temp_dir_path / 'swimangle_plot.png', relative_position=[85, 60], size=(int(588/6), int(432/6)))
-                    pdf.create_textbox("Note: Paths for all road users are plotted, but speed, acceleration, and swim angle are shown only for the most relevant ones.",
-                                   relative_position=[0, 135], font=Config.PDF_FONT_SUBTITLE_REGULAR)
+                    if len(acceleration_warnings) + len(acceleration_errors) + len(swimangle_warnings) + len(swimangle_errors) > 0:
+                        pdf.create_textbox("Note: Paths for all road users are plotted, but speed, acceleration, and swim angle are shown only for entities facing dynamic issues.",
+                                    relative_position=[0, 135], font=Config.PDF_FONT_SUBTITLE_REGULAR)
+                    else:
+                        pdf.create_textbox("Note: Paths for all road users are plotted, but speed, acceleration, and swim angle are shown only for ego and up to other 4 entities.",
+                                    relative_position=[0, 135], font=Config.PDF_FONT_SUBTITLE_REGULAR)
                 except Exception:
                     pdf.create_textbox("Note: Graphs could not be generated because envelope does not contain any stories.", 
                                     relative_position=[0, 135], font=Config.PDF_FONT_SUBTITLE_REGULAR)
@@ -269,14 +273,9 @@ def create_report_single(checker, title, out_path):
 
 def add_error_warning_lines(ax, variable):
     """
-    Add horizontal lines for error and warning thresholds to a plot.
-    Args:
-        ax: Matplotlib Axes to draw on.
-        variable: Name of the variable ("acceleration" or "swimangle").
+    Add horizontal lines for error and warning thresholds with 
+    collision-aware label placement.
     """
-    xmin, xmax = ax.get_xlim()
-
-    # Map variable name to the corresponding thresholds defined in Config
     if variable == 'acceleration':
         error_threshold = Config.ACCELERATION_ERROR_THRESHOLD
         warning_threshold = Config.ACCELERATION_WARNING_THRESHOLD
@@ -285,22 +284,40 @@ def add_error_warning_lines(ax, variable):
         warning_threshold = Config.SWIMANGLE_WARNING_THRESHOLD
     else:
         raise ValueError(f"Unsupported variable for thresholds: {variable!r}")
-	
-    ax.hlines(+error_threshold, xmin=xmin, xmax=xmax, 
-                            linestyle=(0, (5, 10)), colors=tuple(np.array(Config.ERROR_COLOR)/255))
-    ax.hlines(+warning_threshold, xmin=xmin, xmax=xmax, 
-                            linestyle=(0, (5, 10)), colors=tuple(np.array(Config.WARNING_COLOR)/255))
-    ax.hlines(-warning_threshold, xmin=xmin, xmax=xmax, 
-                            linestyle=(0, (5, 10)), colors=tuple(np.array(Config.WARNING_COLOR)/255))
-    ax.hlines(-error_threshold, xmin=xmin, xmax=xmax, 
-                            linestyle=(0, (5, 10)), colors=tuple(np.array(Config.ERROR_COLOR)/255))
-    ax.text(0.15, 0.95, 'Error', transform=ax.transAxes, fontsize=10, verticalalignment='top', color=tuple(np.array(Config.ERROR_COLOR)/255))
-    ax.text(0.13, 0.72, 'Warning', transform=ax.transAxes, fontsize=10, verticalalignment='top', color=tuple(np.array(Config.WARNING_COLOR)/255))
-    ax.text(0.13, 0.32, 'Warning', transform=ax.transAxes, fontsize=10, verticalalignment='top', color=tuple(np.array(Config.WARNING_COLOR)/255))
-    ax.text(0.15, 0.09, 'Error', transform=ax.transAxes, fontsize=10, verticalalignment='top', color=tuple(np.array(Config.ERROR_COLOR)/255))
+    
+    err_col = tuple(np.array(Config.ERROR_COLOR)/255)
+    warn_col = tuple(np.array(Config.WARNING_COLOR)/255)
+    
+    # Calculate current axis height to determine if text will overlap
+    ymin, ymax = ax.get_ylim()
+    y_range = ymax - ymin
+    
+    # If the threshold is less than 5% of the total view height, 
+    # the labels will likely overlap.
+    padding = y_range * 0.03 # 3% of the view height for spacing
+
+    thresholds = [
+        (error_threshold, 'Error', err_col, padding),
+        (warning_threshold, 'Warning', warn_col, 0), # Base line
+        (-warning_threshold, 'Warning', warn_col, 0), # Base line
+        (-error_threshold, 'Error', err_col, -padding)
+    ]
+
+    trans = ax.get_yaxis_transform()
+
+    for val, label, col, offset_val in thresholds:
+        # Draw the line at the exact threshold
+        ax.axhline(val, linestyle=(0, (5, 10)), color=col)
+        
+        # Place text with an offset to prevent overlap
+        # Using 'va' to push Error labels further away from Warning labels
+        v_align = 'bottom' if val >= 0 else 'top'
+        
+        ax.text(0.05, val + offset_val, label, transform=trans, 
+                fontsize=9, color=col, va=v_align, ha='left',
+                bbox=dict(facecolor='white', alpha=0.5, edgecolor='none', pad=1)) # Added a small white buffer
 
     ax.legend()
-
 
 def plot_dynamics(checker, analyzed_dynamics, n_plot_entities=5, output_dir=None):
     """
@@ -331,6 +348,8 @@ def plot_dynamics(checker, analyzed_dynamics, n_plot_entities=5, output_dir=None
     swimangle_plot = plt.figure()
     swimangle_ax = swimangle_plot.add_subplot(111)
     
+    max_value_speed, max_value_acceleration, max_value_swimangle = 0, 0, 0
+    
     # Build time series for each entity and plot the most relevant ones.
     for entity_name in dynamic_data.keys():
         positions, times = dynamic_data[entity_name]
@@ -338,37 +357,37 @@ def plot_dynamics(checker, analyzed_dynamics, n_plot_entities=5, output_dir=None
         df = checker._calculate_acceleration_swimangle(df)
 
         if 'ego' in entity_name:
-            plot_variable(speed_ax, df, 'speed', entity_name, xlabel, ylabel_speed, save=False)
-            plot_variable(acceleration_ax, df, 'acceleration', entity_name, xlabel, ylabel_acceleration, save=False)
-            plot_variable(swimangle_ax, df, 'swimangle', entity_name, xlabel, ylabel_swimangle, save=False)
+            max_value_speed = plot_variable(speed_ax, df, 'speed', entity_name, xlabel, ylabel_speed, max_value_speed, save=False)
+            max_value_acceleration = plot_variable(acceleration_ax, df, 'acceleration', entity_name, xlabel, ylabel_acceleration, max_value_acceleration, save=False)
+            max_value_swimangle = plot_variable(swimangle_ax, df, 'swimangle', entity_name, xlabel, ylabel_swimangle, max_value_swimangle, save=False)
         else:
             # Only plot non-ego entities when thresholds are exceeded
             if np.any(np.abs(df.acceleration) > Config.ACCELERATION_ERROR_THRESHOLD):
-                plot_variable(speed_ax, df, 'speed', entity_name, xlabel, ylabel_speed, save=False)
-                plot_variable(acceleration_ax, df, 'acceleration', entity_name, xlabel, ylabel_acceleration, save=False)
+                max_value_speed = plot_variable(speed_ax, df, 'speed', entity_name, xlabel, ylabel_speed, max_value_speed, save=False)
+                max_value_acceleration = plot_variable(acceleration_ax, df, 'acceleration', entity_name, xlabel, ylabel_acceleration, max_value_acceleration, save=False)
             elif np.any(np.abs(df.acceleration) > Config.ACCELERATION_WARNING_THRESHOLD):
-                plot_variable(speed_ax, df, 'speed', entity_name, xlabel, ylabel_speed, save=False)
-                plot_variable(acceleration_ax, df, 'acceleration', entity_name, xlabel, ylabel_acceleration, save=False)
+                max_value_speed = plot_variable(speed_ax, df, 'speed', entity_name, xlabel, ylabel_speed, max_value_speed, save=False)
+                max_value_acceleration = plot_variable(acceleration_ax, df, 'acceleration', entity_name, xlabel, ylabel_acceleration, max_value_acceleration, save=False)
 
             if np.any(np.abs(df.swimangle) > Config.SWIMANGLE_ERROR_THRESHOLD):
-                plot_variable(swimangle_ax, df, 'swimangle', entity_name, xlabel, ylabel_swimangle, save=False)
+                max_value_swimangle = plot_variable(swimangle_ax, df, 'swimangle', entity_name, xlabel, ylabel_swimangle, max_value_swimangle, save=False)
             elif np.any(np.abs(df.swimangle) > Config.SWIMANGLE_WARNING_THRESHOLD):
-                plot_variable(swimangle_ax, df, 'swimangle', entity_name, xlabel, ylabel_swimangle, save=False)
+                max_value_swimangle = plot_variable(swimangle_ax, df, 'swimangle', entity_name, xlabel, ylabel_swimangle, max_value_swimangle, save=False)
         # Close the current figure context to avoid resource leaks in long runs.
         mpl.pyplot.close()
         
     speed_ax.set_title('Speed over time')
-    select_and_plot_extra_entities(dynamic_data, 'speed', speed_ax, analyzed_dynamics["acceleration_errors"], analyzed_dynamics["acceleration_warnings"], n_plot_entities, checker, xlabel=xlabel, ylabel=ylabel_speed, save=False)
+    select_and_plot_extra_entities(dynamic_data, 'speed', speed_ax, analyzed_dynamics["acceleration_errors"], analyzed_dynamics["acceleration_warnings"], n_plot_entities, checker, xlabel=xlabel, ylabel=ylabel_speed, max_value=max_value_speed, save=False)
     speed_plot.savefig(output_dir / 'speed_plot.png')
     
     # Acceleration
-    select_and_plot_extra_entities(dynamic_data, 'acceleration', acceleration_ax, analyzed_dynamics["acceleration_errors"], analyzed_dynamics["acceleration_warnings"], n_plot_entities, checker, xlabel=xlabel, ylabel=ylabel_acceleration, save=False)
+    select_and_plot_extra_entities(dynamic_data, 'acceleration', acceleration_ax, analyzed_dynamics["acceleration_errors"], analyzed_dynamics["acceleration_warnings"], n_plot_entities, checker, xlabel=xlabel, ylabel=ylabel_acceleration, max_value=max_value_acceleration, save=False)
     acceleration_ax.set_title('Acceleration over time')
     add_error_warning_lines(acceleration_ax, 'acceleration')
     acceleration_plot.savefig(output_dir / 'acceleration_plot.png')
     
     # Swim angle
-    select_and_plot_extra_entities(dynamic_data, 'swimangle', swimangle_ax, analyzed_dynamics["swimangle_errors"], analyzed_dynamics["swimangle_warnings"], n_plot_entities, checker, xlabel=xlabel, ylabel=ylabel_swimangle, save=False)
+    select_and_plot_extra_entities(dynamic_data, 'swimangle', swimangle_ax, analyzed_dynamics["swimangle_errors"], analyzed_dynamics["swimangle_warnings"], n_plot_entities, checker, xlabel=xlabel, ylabel=ylabel_swimangle, max_value=max_value_swimangle, save=False)
     swimangle_ax.set_title('Swim angle over time')
     add_error_warning_lines(swimangle_ax, 'swimangle')
     swimangle_plot.savefig(output_dir / 'swimangle_plot.png')
@@ -426,7 +445,7 @@ def create_report_multiple(title, file_information, out_path, print_log=False):
         logger.info(f'Report created: {out}')
 
 
-def plot_variable(ax, df, variable, entity_name, xlabel, ylabel, save=False):
+def plot_variable(ax, df, variable, entity_name, xlabel, ylabel, max_value=0, save=False):
     """
     Plot a single variable over time for one entity.
     Args:
@@ -436,6 +455,7 @@ def plot_variable(ax, df, variable, entity_name, xlabel, ylabel, save=False):
         entity_name: Entity identifier used in the legend.
         xlabel: Label for the x-axis.
         ylabel: Label for the y-axis.
+        max_value: Current maximum value for y-axis scaling.
         save: Whether to save an individual plot image.
     """
     """
@@ -446,6 +466,12 @@ def plot_variable(ax, df, variable, entity_name, xlabel, ylabel, save=False):
         ax.plot(df.time, df.loc[:, variable], label=entity_name, color=Config.EGO_COLORMAP(255), zorder=999)
     else:
         ax.plot(df.time, df.loc[:, variable], label=entity_name, color=Config.OTHER_COLORMAP(255), zorder=-1)
+        
+    max_value_local = df.loc[:, variable].abs().max()
+    if max_value_local > max_value:
+        max_value = max_value_local
+    ax.set_ylim(-max_value*1.2, max_value*1.2)
+
     # plt.title(str(variable) + ' over time for entity ' + entity_name)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
@@ -453,6 +479,8 @@ def plot_variable(ax, df, variable, entity_name, xlabel, ylabel, save=False):
         plt.savefig(str(variable) + '_' + entity_name + '.png')
     # Close the global pyplot state to avoid accumulating figures.
     mpl.pyplot.close()
+    
+    return max_value
 
 
 def plot_fading_line(ax, df, label, zorder, segment_size=10, arrow_size=2, colormap=mpl.colormaps['Blues']):
@@ -509,12 +537,12 @@ def plot_vehicle_paths(dynamic_data, checker, segment_size=10, arrow_size=1, sav
             plot_fading_line(paths_ax, df, label='ego vehicle', segment_size=segment_size, arrow_size=arrow_size, colormap=Config.EGO_COLORMAP, zorder=999)
             paths_ax.arrow(df.iloc[-arrow_size*segment_size].x, df.iloc[-arrow_size*segment_size].y, 
                            df.iloc[-1].x - df.iloc[-arrow_size*segment_size].x, df.iloc[-1].y - df.iloc[-arrow_size*segment_size].y, 
-                           head_width=2, head_length=5, length_includes_head=True, color=Config.EGO_COLORMAP(255), zorder=999)
+                           head_width=0.8, head_length=2, length_includes_head=True, color=Config.EGO_COLORMAP(255), zorder=999)
         else:
-            plot_fading_line(paths_ax, df, label='other', segment_size=10, arrow_size=arrow_size, colormap=Config.OTHER_COLORMAP, zorder=-1)
+            plot_fading_line(paths_ax, df, label='other', segment_size=segment_size, arrow_size=arrow_size, colormap=Config.OTHER_COLORMAP, zorder=-1)
             paths_ax.arrow(df.iloc[-arrow_size*segment_size].x, df.iloc[-arrow_size*segment_size].y, 
                            df.iloc[-1].x - df.iloc[-arrow_size*segment_size].x, df.iloc[-1].y - df.iloc[-arrow_size*segment_size].y, 
-                           head_width=2, head_length=5, length_includes_head=True, color=Config.OTHER_COLORMAP(255), zorder=-1)
+                           head_width=0.8, head_length=2, length_includes_head=True, color=Config.OTHER_COLORMAP(255), zorder=-1)
 
     # Manual legend entries to match the two color categories.
     legend_elements = [Line2D([0], [0], color=Config.EGO_COLORMAP(255), label='ego vehicle'),
@@ -529,7 +557,7 @@ def plot_vehicle_paths(dynamic_data, checker, segment_size=10, arrow_size=1, sav
     mpl.pyplot.close()
 
 
-def select_and_plot_extra_entities(dynamic_data, variable, ax, entities_errors, entities_warnings, n_plot_entities, checker, xlabel, ylabel, save=False):
+def select_and_plot_extra_entities(dynamic_data, variable, ax, entities_errors, entities_warnings, n_plot_entities, checker, xlabel, ylabel, max_value=0, save=False):
     """
     Select additional entities to plot when too few have issues.
 
@@ -560,6 +588,6 @@ def select_and_plot_extra_entities(dynamic_data, variable, ax, entities_errors, 
         positions, times = dynamic_data[entity_name]
         df = checker._build_dynamic_data_df(positions, times)
         df = checker._calculate_acceleration_swimangle(df)
-        plot_variable(ax, df, variable, entity_name, xlabel, ylabel, save=save)
+        max_value = plot_variable(ax, df, variable, entity_name, xlabel, ylabel, max_value=max_value, save=save)
         
     ax.legend()
