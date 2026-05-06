@@ -1210,7 +1210,7 @@ def quality_check_multiple(
     aggregated_checkers = [] if aggregated else None
     for file in files_path.glob('*.xosc'):
         if single:
-            Path(out_path / Path('single_reports/')).mkdir(exist_ok=True)
+            Path(out_path / Path('single_reports/')).mkdir(parents=True, exist_ok=True)
             checker = quality_check_single(file, out_path / Path('single_reports/'), schema_path, esmini_path, out_pdf, out_csv)
         else:
             checker = quality_check_single(file, out_path / Path('single_reports/'), schema_path, esmini_path, False, False, False)

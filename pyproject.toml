@@ -18,7 +18,7 @@ dependencies = [
     "matplotlib==3.9.4",
     "numpy==2.0.2",
     "pandas==2.2.3",
-    "scenariogeneration==0.14.9",
+    "scenariogeneration~=0.16.5",
     "scipy==1.13.1",
     "shapely==2.0.7",
     "typer==0.15.2",

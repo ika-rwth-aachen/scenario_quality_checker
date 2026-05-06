@@ -70,7 +70,8 @@ class PDF(FPDF):
         if not font:
             font = self.defaut_font
         self.set_font(font["name"], font["type"], font["size"])
-        self.set_text_color(color)
+        if color is not None:
+            self.set_text_color(color)
 
         boarder = 1 if set_box else 0
         text_length, text_height = self._get_text_dimensions(text, font["name"], font["size"])
