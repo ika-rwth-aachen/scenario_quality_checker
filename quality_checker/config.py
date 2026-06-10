@@ -13,10 +13,10 @@ class Config:
     WARNING_COLOR = (250, 95, 31)
 
     # thresholds for errors and warnings
-    ACCELERATION_ERROR_THRESHOLD = 9.8*2  # m/s^2
-    ACCELERATION_WARNING_THRESHOLD = 9.8  # m/s^2
-    SWIMANGLE_ERROR_THRESHOLD = 0.2  # radians
-    SWIMANGLE_WARNING_THRESHOLD = 0.1  # radians
+    ACCELERATION_ERROR_THRESHOLD = 9.8*3  # m/s^2  -  reference: Commission Implementing Regulation (EU) 2022/1426 of 5 August 2022 Annex III, 1.3.2
+    ACCELERATION_WARNING_THRESHOLD = 9.8  # m/s^2  -  often used as physical limit
+    SWIMANGLE_ERROR_THRESHOLD = 0.2  # radians  -  reference: https://ietresearch.onlinelibrary.wiley.com/doi/10.1049/iet-its.2020.0385
+    SWIMANGLE_WARNING_THRESHOLD = 0.1  # radians  -  reference: https://www.mdpi.com/2032-6653/12/1/42
 
     # PDF report font settings
     PDF_FONT_NAME = "Arial"
