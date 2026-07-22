@@ -30,7 +30,7 @@ from .pdf_report_creator import *
 from .xodr_position_resolver import OpenDrivePositionResolver
 
 # Default schema path relative to the package location
-DEFAULT_SCHEMA_PATH = Path(__file__).parent.parent / "schemas"
+DEFAULT_SCHEMA_PATH = Path(__file__).parent.parent / "quality_checker/schemas"
 
 app = typer.Typer()
 

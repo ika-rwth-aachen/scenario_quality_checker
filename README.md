@@ -54,7 +54,7 @@ Single file with PDF and CSV:
 python -m quality_checker quality_check_single \
   --file-path example_files/envelope_dynamic_error_1.xosc \
   --out-path reports/ \
-  --schema-path schemas/ \
+  --schema-path quality_checker/schemas/ \
   --out-pdf \
   --out-csv
 ```
@@ -65,7 +65,7 @@ Multiple files with per-file and aggregated outputs:
 python -m quality_checker quality_check_multiple \
   --files-path example_files/ \
   --out-path reports/ \
-  --schema-path schemas/ \
+  --schema-path quality_checker/schemas/ \
   --single \
   --aggregated \
   --out-pdf \
@@ -81,7 +81,7 @@ Checks one `.xosc` file and optionally creates reports.
 Options:
 - `--file-path`: input `.xosc` file (required)
 - `--out-path`: output directory for reports (default `reports/single_reports/`)
-- `--schema-path`: directory containing `OpenSCENARIO_*.xsd` (default `schemas/`)
+- `--schema-path`: directory containing `OpenSCENARIO_*.xsd` (default `quality_checker/schemas/`)
 - `--out-pdf`: create a PDF report
 - `--out-csv`: create a CSV report
 - `--print-log`: enable log output
@@ -97,7 +97,7 @@ Checks all `.xosc` files in a directory. Optionally creates per-file and aggrega
 Options:
 - `--files-path`: directory with `.xosc` files (required)
 - `--out-path`: output directory for reports (default `reports/`)
-- `--schema-path`: directory containing `OpenSCENARIO_*.xsd` (default `schemas/`)
+- `--schema-path`: directory containing `OpenSCENARIO_*.xsd` (default `quality_checker/schemas/`)
 - `--single`: create per-file reports under `reports/single_reports/`
 - `--aggregated`: create a combined report across all files
 - `--out-pdf`: create PDF report(s)

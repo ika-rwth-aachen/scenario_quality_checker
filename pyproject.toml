@@ -34,3 +34,6 @@ Repository = "https://github.com/ika-rwth-aachen/scenario-quality-checker"
 [tool.setuptools.packages.find]
 where = ["."]
 exclude = ["assets", "example_files", "tests*"]
+
+[tool.setuptools.package-data]
+quality_checker = ["schemas/*.xsd"]
