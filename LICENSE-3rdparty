@@ -67,7 +67,7 @@ Additional third-party assets included in this repository:
 
 ---------------------------------------------------------------
 
-11. ASAM OpenSCENARIO XSD schemas (files in `schemas/`)
+11. ASAM OpenSCENARIO XSD schemas (files in `quality_checker/schemas/`)
 - License: ASAM license terms
 - Source: https://www.asam.net/standards/detail/openscenario/
 
