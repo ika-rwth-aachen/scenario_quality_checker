@@ -20,7 +20,9 @@ from quality_checker.thresholds import Thresholds
 
 def test_checker_works_without_the_new_arguments(example):
     """The pre-existing four-argument constructor still runs the pipeline."""
-    checker = FileQualityChecker(example("envelope_xsd_valid_v1-2.xosc"), DEFAULT_SCHEMA_PATH, None, False)
+    checker = FileQualityChecker(
+        example("envelope_xsd_valid_v1-2.xosc"), DEFAULT_SCHEMA_PATH, None, False
+    )
 
     assert checker.xml_loadable
     assert checker.xsd_valid
@@ -45,16 +47,24 @@ def test_quality_check_single_keeps_its_parameter_order():
 
 def test_private_helpers_used_by_consumers_exist():
     """scenario.generator reaches into these to report metric peaks."""
-    for name in ("_get_dynamic_data", "_build_dynamic_data_df", "_calculate_acceleration_swimangle"):
+    for name in (
+        "_get_dynamic_data",
+        "_build_dynamic_data_df",
+        "_calculate_acceleration_swimangle",
+    ):
         assert callable(getattr(FileQualityChecker, name))
 
 
-def test_work_dir_keeps_intermediate_files_out_of_the_cwd(example, tmp_path, monkeypatch):
+def test_work_dir_keeps_intermediate_files_out_of_the_cwd(
+    example, tmp_path, monkeypatch
+):
     """An injected work_dir replaces the default ./results/tmp location."""
     monkeypatch.chdir(tmp_path)
     work_dir = tmp_path / "elsewhere"
 
-    FileQualityChecker(example("envelope_xsd_valid_v1-2.xosc"), DEFAULT_SCHEMA_PATH, work_dir=work_dir)
+    FileQualityChecker(
+        example("envelope_xsd_valid_v1-2.xosc"), DEFAULT_SCHEMA_PATH, work_dir=work_dir
+    )
 
     assert work_dir.is_dir()
     assert not (tmp_path / "results").exists()
@@ -65,16 +75,24 @@ def test_default_thresholds_come_from_config():
     defaults = Thresholds.default()
 
     # approx because Config states the limits as products such as 9.8 * 3.
-    assert defaults.acceleration_warning == pytest.approx(Config.ACCELERATION_WARNING_THRESHOLD)
-    assert defaults.acceleration_error == pytest.approx(Config.ACCELERATION_ERROR_THRESHOLD)
-    assert defaults.sideslip_warning == pytest.approx(Config.SWIMANGLE_WARNING_THRESHOLD)
+    assert defaults.acceleration_warning == pytest.approx(
+        Config.ACCELERATION_WARNING_THRESHOLD
+    )
+    assert defaults.acceleration_error == pytest.approx(
+        Config.ACCELERATION_ERROR_THRESHOLD
+    )
+    assert defaults.sideslip_warning == pytest.approx(
+        Config.SWIMANGLE_WARNING_THRESHOLD
+    )
     assert defaults.sideslip_error == pytest.approx(Config.SWIMANGLE_ERROR_THRESHOLD)
 
 
 def test_overriding_thresholds_leaves_config_untouched(example, tmp_path):
     """Per-run limits must not leak into the process-wide defaults."""
     original = Config.ACCELERATION_WARNING_THRESHOLD
-    limits = Thresholds.from_mapping({"acceleration_warning": 0.01, "acceleration_error": 999})
+    limits = Thresholds.from_mapping(
+        {"acceleration_warning": 0.01, "acceleration_error": 999}
+    )
 
     checker = FileQualityChecker(
         example("envelope_xsd_valid_v1-1.xosc"),
@@ -90,7 +108,9 @@ def test_overriding_thresholds_leaves_config_untouched(example, tmp_path):
 def test_reports_create_their_output_directory(example, tmp_path):
     """Both report writers create out_path, which the web app relies on."""
     checker = FileQualityChecker(
-        example("envelope_xsd_valid_v1-2.xosc"), DEFAULT_SCHEMA_PATH, work_dir=tmp_path / "tmp"
+        example("envelope_xsd_valid_v1-2.xosc"),
+        DEFAULT_SCHEMA_PATH,
+        work_dir=tmp_path / "tmp",
     )
     reports = tmp_path / "missing" / "reports"
 

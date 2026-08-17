@@ -9,8 +9,8 @@ override thresholds for a single run without mutating global state.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 
 from .config import Config
 
@@ -74,7 +74,9 @@ class Thresholds:
             except (TypeError, ValueError):
                 raise ValueError(f"{field} must be a number, got {raw!r}")
             if not math.isfinite(number) or number <= 0:
-                raise ValueError(f"{field} must be a positive, finite number, got {number!r}")
+                raise ValueError(
+                    f"{field} must be a positive, finite number, got {number!r}"
+                )
             resolved[field] = number
 
         thresholds = cls(**resolved)

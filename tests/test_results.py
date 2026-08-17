@@ -20,7 +20,11 @@ def test_dynamic_findings_carry_the_measured_peak(example, tmp_path):
     """A dynamics finding must name the entity, its peak and the limit."""
     checker = check(example, "envelope_dynamic_error_1.xosc", tmp_path)
 
-    dynamic = [f for f in collect_findings(checker) if f["category"] in {"acceleration", "sideslip"}]
+    dynamic = [
+        f
+        for f in collect_findings(checker)
+        if f["category"] in {"acceleration", "sideslip"}
+    ]
 
     assert dynamic, "the dynamic error example should produce dynamic findings"
     finding = dynamic[0]
@@ -41,7 +45,11 @@ def test_file_errors_become_categorized_findings(example, tmp_path):
     categories = {f["category"] for f in findings}
 
     assert categories & {"entity_definition", "init_position", "intersection", "in_out"}
-    assert all(f["severity"] == "error" for f in findings if f["category"] == "entity_definition")
+    assert all(
+        f["severity"] == "error"
+        for f in findings
+        if f["category"] == "entity_definition"
+    )
 
 
 def test_schema_errors_are_reported_as_errors(example, tmp_path):
@@ -96,7 +104,9 @@ def test_serialized_urls_reference_the_run(example, tmp_path):
     """Plot and report URLs are built from the run id."""
     checker = check(example, "envelope_dynamic_error_1.xosc", tmp_path)
 
-    result = serialize_checker(checker, "abc123", "x.xosc", plots=[("speed", "Speed over time")])
+    result = serialize_checker(
+        checker, "abc123", "x.xosc", plots=[("speed", "Speed over time")]
+    )
 
     assert result["plots"][0]["url"] == "/api/runs/abc123/plots/speed.png"
     assert result["downloads"] == {
@@ -109,7 +119,9 @@ def test_reported_thresholds_are_the_ones_used(example, tmp_path):
     """Overridden limits must be echoed back, not the Config defaults."""
     limits = Thresholds.from_mapping({"acceleration_warning": 1.5})
 
-    checker = check(example, "envelope_dynamic_error_1.xosc", tmp_path, thresholds=limits)
+    checker = check(
+        example, "envelope_dynamic_error_1.xosc", tmp_path, thresholds=limits
+    )
     result = serialize_checker(checker, "run", "x.xosc")
 
     assert result["thresholds"]["acceleration_warning"] == 1.5

@@ -63,7 +63,9 @@ def dynamic_peak(checker, entity_name, metric_name):
             return None
         peak_index = values.idxmax()
         raw_time = dataframe.loc[peak_index, "time"]
-        peak_time = None if raw_time is None or math.isnan(raw_time) else float(raw_time)
+        peak_time = (
+            None if raw_time is None or math.isnan(raw_time) else float(raw_time)
+        )
         return float(values.loc[peak_index]), peak_time
     except Exception:  # noqa: BLE001 - trace details are a nice-to-have.
         return None
@@ -116,14 +118,20 @@ def collect_findings(checker):
     file_errors = getattr(checker, "file_errors", None) or ([], [], [], [])
     for (category, label), entries in zip(FILE_ERROR_CATEGORIES, file_errors):
         for entry in entries or []:
-            findings.append(_finding("error", category, f"{label}: {entry}", entity=str(entry)))
+            findings.append(
+                _finding("error", category, f"{label}: {entry}", entity=str(entry))
+            )
 
     dynamic_errors = getattr(checker, "dynamic_errors", None) or ([], [], [], [])
     for index, metric_name, severity in DYNAMIC_ERROR_SLOTS:
         if index >= len(dynamic_errors):
             continue
         for entity_name in dynamic_errors[index] or []:
-            findings.append(_dynamic_finding(checker, entity_name, metric_name, severity, thresholds))
+            findings.append(
+                _dynamic_finding(
+                    checker, entity_name, metric_name, severity, thresholds
+                )
+            )
 
     for entry in getattr(checker, "position_resolution_warnings", None) or []:
         findings.append(_finding("warning", "position_resolution", str(entry)))
@@ -222,7 +230,11 @@ def serialize_checker(checker, run_id, file_name, plots=(), map_info=None):
         "findings": findings,
         "map": map_info or {"uploaded": False},
         "plots": [
-            {"name": name, "label": label, "url": f"/api/runs/{run_id}/plots/{name}.png"}
+            {
+                "name": name,
+                "label": label,
+                "url": f"/api/runs/{run_id}/plots/{name}.png",
+            }
             for name, label in plots
         ],
         "downloads": {

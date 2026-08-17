@@ -11,6 +11,6 @@ import os
 
 os.environ.setdefault("MPLBACKEND", "Agg")
 
-from .thresholds import Thresholds  # noqa: E402  - must follow the backend setup.
+from .thresholds import Thresholds
 
 __all__ = ["Thresholds"]

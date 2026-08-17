@@ -34,7 +34,11 @@ def test_index_and_examples_are_served(client):
 
 def test_valid_scenario_reports_no_issues(client, example):
     """A clean scenario checks out without findings."""
-    result = created(client.post("/api/checks", files=upload(example("envelope_xsd_valid_v1-2.xosc"))))
+    result = created(
+        client.post(
+            "/api/checks", files=upload(example("envelope_xsd_valid_v1-2.xosc"))
+        )
+    )
 
     assert result["status"]["scenario_parsed"] is True
     assert result["counts"] == {"errors": 0, "warnings": 0}
@@ -43,7 +47,9 @@ def test_valid_scenario_reports_no_issues(client, example):
 
 def test_scenario_with_issues_reports_findings(client, example):
     """A scenario with entity problems reports them as errors."""
-    result = created(client.post("/api/checks", files=upload(example("envelope_file_error_1.xosc"))))
+    result = created(
+        client.post("/api/checks", files=upload(example("envelope_file_error_1.xosc")))
+    )
 
     assert result["counts"]["errors"] > 0
     assert any(f["severity"] == "error" for f in result["findings"])
@@ -51,7 +57,11 @@ def test_scenario_with_issues_reports_findings(client, example):
 
 def test_plots_are_rendered_and_served(client, example):
     """Every advertised plot URL returns a PNG."""
-    result = created(client.post("/api/checks", files=upload(example("envelope_dynamic_error_1.xosc"))))
+    result = created(
+        client.post(
+            "/api/checks", files=upload(example("envelope_dynamic_error_1.xosc"))
+        )
+    )
 
     assert {plot["name"] for plot in result["plots"]} == {
         "speed",
@@ -68,14 +78,24 @@ def test_plots_are_rendered_and_served(client, example):
 
 def test_unknown_plot_is_rejected(client, example):
     """Only the known plot names are addressable."""
-    result = created(client.post("/api/checks", files=upload(example("envelope_dynamic_error_1.xosc"))))
+    result = created(
+        client.post(
+            "/api/checks", files=upload(example("envelope_dynamic_error_1.xosc"))
+        )
+    )
 
-    assert client.get(f"/api/runs/{result['run_id']}/plots/secrets.png").status_code == 404
+    assert (
+        client.get(f"/api/runs/{result['run_id']}/plots/secrets.png").status_code == 404
+    )
 
 
 def test_reports_can_be_downloaded(client, example):
     """The PDF and CSV reports are generated on demand."""
-    result = created(client.post("/api/checks", files=upload(example("envelope_dynamic_error_1.xosc"))))
+    result = created(
+        client.post(
+            "/api/checks", files=upload(example("envelope_dynamic_error_1.xosc"))
+        )
+    )
 
     pdf = client.get(result["downloads"]["pdf"])
     assert pdf.status_code == 200
@@ -90,7 +110,9 @@ def test_reports_can_be_downloaded(client, example):
 
 def test_a_run_can_be_fetched_again(client, example):
     """Results stay addressable for the session that created them."""
-    result = created(client.post("/api/checks", files=upload(example("envelope_file_error_1.xosc"))))
+    result = created(
+        client.post("/api/checks", files=upload(example("envelope_file_error_1.xosc")))
+    )
 
     again = client.get(f"/api/runs/{result['run_id']}")
 
@@ -106,7 +128,9 @@ def test_unknown_run_is_not_found(client):
 
 def test_example_can_be_checked_without_uploading(client):
     """The bundled examples are checkable by name."""
-    result = created(client.post("/api/checks", data={"example": "envelope_file_error_1.xosc"}))
+    result = created(
+        client.post("/api/checks", data={"example": "envelope_file_error_1.xosc"})
+    )
 
     assert result["file_name"] == "envelope_file_error_1.xosc"
 
@@ -126,7 +150,9 @@ def test_missing_input_is_rejected(client):
 
 def test_wrong_suffix_is_rejected(client):
     """Only .xosc files are accepted as scenarios."""
-    response = client.post("/api/checks", files={"scenario": ("notes.txt", b"hello", "text/plain")})
+    response = client.post(
+        "/api/checks", files={"scenario": ("notes.txt", b"hello", "text/plain")}
+    )
 
     assert response.status_code == 400
     assert ".xosc" in response.json()["detail"]
@@ -134,7 +160,9 @@ def test_wrong_suffix_is_rejected(client):
 
 def test_empty_upload_is_rejected(client):
     """An empty file cannot be checked."""
-    response = client.post("/api/checks", files={"scenario": ("a.xosc", b"", "application/xml")})
+    response = client.post(
+        "/api/checks", files={"scenario": ("a.xosc", b"", "application/xml")}
+    )
 
     assert response.status_code == 400
 
@@ -155,7 +183,9 @@ def test_oversized_upload_is_rejected(client, monkeypatch):
 def test_threshold_override_changes_severities(client, example):
     """A lower warning limit turns quiet entities into warnings."""
     baseline = created(
-        client.post("/api/checks", files=upload(example("envelope_xsd_valid_v1-1.xosc")))
+        client.post(
+            "/api/checks", files=upload(example("envelope_xsd_valid_v1-1.xosc"))
+        )
     )
 
     lowered = created(
@@ -169,7 +199,9 @@ def test_threshold_override_changes_severities(client, example):
     assert lowered["thresholds"]["acceleration_warning"] == 0.05
     assert lowered["counts"]["warnings"] > baseline["counts"]["warnings"]
     # The process-wide defaults must be unaffected.
-    assert client.get("/api/thresholds").json()["defaults"]["acceleration_warning"] == 9.8
+    assert (
+        client.get("/api/thresholds").json()["defaults"]["acceleration_warning"] == 9.8
+    )
 
 
 def test_invalid_threshold_is_rejected(client, example):
@@ -216,7 +248,9 @@ def test_uploaded_map_is_linked_where_the_scenario_expects_it(client, example):
 def test_missing_map_is_pointed_out(client, example):
     """A scenario referencing a map says so when none was uploaded."""
     result = created(
-        client.post("/api/checks", files=upload(example("envelope_dynamic_error_1.xosc")))
+        client.post(
+            "/api/checks", files=upload(example("envelope_dynamic_error_1.xosc"))
+        )
     )
 
     assert result["map"]["uploaded"] is False
@@ -264,7 +298,10 @@ def test_wrong_map_suffix_is_rejected(client, example):
 
 def batch_files(example, names):
     """Build the repeated multipart field a batch request expects."""
-    return [("scenarios", (name, example(name).read_bytes(), "application/xml")) for name in names]
+    return [
+        ("scenarios", (name, example(name).read_bytes(), "application/xml"))
+        for name in names
+    ]
 
 
 BATCH_NAMES = [
@@ -276,7 +313,9 @@ BATCH_NAMES = [
 
 def test_batch_summarizes_every_file(client, example):
     """Each uploaded scenario becomes one row of the aggregated table."""
-    batch = created(client.post("/api/batches", files=batch_files(example, BATCH_NAMES)))
+    batch = created(
+        client.post("/api/batches", files=batch_files(example, BATCH_NAMES))
+    )
 
     assert [row["file_name"] for row in batch["files"]] == BATCH_NAMES
     unloadable = batch["files"][2]
@@ -286,7 +325,9 @@ def test_batch_summarizes_every_file(client, example):
 
 def test_batch_reports_can_be_downloaded(client, example):
     """The aggregated PDF and CSV cover the whole batch."""
-    batch = created(client.post("/api/batches", files=batch_files(example, BATCH_NAMES)))
+    batch = created(
+        client.post("/api/batches", files=batch_files(example, BATCH_NAMES))
+    )
 
     pdf = client.get(batch["downloads"]["pdf"])
     assert pdf.status_code == 200
@@ -301,7 +342,9 @@ def test_batch_reports_can_be_downloaded(client, example):
 
 def test_batch_rows_drill_down_into_a_full_result(client, example):
     """Opening a batch row yields the detailed result including plots."""
-    batch = created(client.post("/api/batches", files=batch_files(example, BATCH_NAMES)))
+    batch = created(
+        client.post("/api/batches", files=batch_files(example, BATCH_NAMES))
+    )
 
     response = client.get(f"/api/runs/{batch['files'][0]['run_id']}")
 
@@ -323,7 +366,8 @@ def test_batch_accepts_a_zip_archive(client, example):
 
     batch = created(
         client.post(
-            "/api/batches", files=[("scenarios", ("pack.zip", buffer.read(), "application/zip"))]
+            "/api/batches",
+            files=[("scenarios", ("pack.zip", buffer.read(), "application/zip"))],
         )
     )
 
@@ -338,7 +382,8 @@ def test_zip_path_traversal_is_refused(client):
     buffer.seek(0)
 
     response = client.post(
-        "/api/batches", files=[("scenarios", ("bad.zip", buffer.read(), "application/zip"))]
+        "/api/batches",
+        files=[("scenarios", ("bad.zip", buffer.read(), "application/zip"))],
     )
 
     assert response.status_code == 400
@@ -353,7 +398,8 @@ def test_batch_without_scenarios_is_rejected(client):
     buffer.seek(0)
 
     response = client.post(
-        "/api/batches", files=[("scenarios", ("empty.zip", buffer.read(), "application/zip"))]
+        "/api/batches",
+        files=[("scenarios", ("empty.zip", buffer.read(), "application/zip"))],
     )
 
     assert response.status_code == 400
@@ -374,7 +420,9 @@ def test_batch_file_count_is_capped(client, example, monkeypatch):
 
 def test_runs_are_private_to_their_session(client, example):
     """A second browser session cannot read another session's run."""
-    result = created(client.post("/api/checks", files=upload(example("envelope_file_error_1.xosc"))))
+    result = created(
+        client.post("/api/checks", files=upload(example("envelope_file_error_1.xosc")))
+    )
     client.cookies.clear()
 
     assert client.get(f"/api/runs/{result['run_id']}").status_code == 404

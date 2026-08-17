@@ -12,31 +12,31 @@ loop stays free while a check is in progress.
 from __future__ import annotations
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
 import os
-from pathlib import Path
 import re
 import shutil
 import tempfile
 import time
-from typing import List, Optional
-from uuid import uuid4
 import xml.etree.ElementTree as ET
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import List, Optional
+from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
+from ..pdf_report_creator import create_report_multiple
 from ..quality_checker import (
     DEFAULT_SCHEMA_PATH,
     FileQualityChecker,
     write_aggregate_csv,
 )
-from ..pdf_report_creator import create_report_multiple
 from ..thresholds import Thresholds
 from .results import PLOT_FILES, serialize_checker, summary_row_json
 
@@ -271,9 +271,11 @@ async def store_upload(upload, destination, max_bytes=None):
     except HTTPException:
         destination.unlink(missing_ok=True)
         raise
-    except Exception as exc:  # noqa: BLE001 - surface storage failures to the UI.
+    except Exception as exc:
         destination.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail=f"Could not store {upload.filename}") from exc
+        raise HTTPException(
+            status_code=400, detail=f"Could not store {upload.filename}"
+        ) from exc
     finally:
         await upload.close()
 
@@ -289,7 +291,8 @@ def require_suffix(name, allowed, kind):
     if suffix not in allowed:
         expected = ", ".join(sorted(allowed))
         raise HTTPException(
-            status_code=400, detail=f"{kind} must be one of {expected}, got '{suffix or name}'"
+            status_code=400,
+            detail=f"{kind} must be one of {expected}, got '{suffix or name}'",
         )
 
 
@@ -339,7 +342,9 @@ async def link_map_upload(map_upload, scenario_path, run_directory):
     require_suffix(map_upload.filename, ALLOWED_MAP_SUFFIXES, "The map file")
 
     resolved = (
-        confined_path(run_directory, reference, scenario_path.parent) if reference else None
+        confined_path(run_directory, reference, scenario_path.parent)
+        if reference
+        else None
     )
     target = resolved or scenario_path.parent / safe_upload_name(map_upload.filename)
     await store_upload(map_upload, target)
@@ -440,15 +445,17 @@ async def in_worker(function, *args):
     loop = asyncio.get_running_loop()
     try:
         return await asyncio.wait_for(
-            loop.run_in_executor(checker_executor(), function, *args), RUN_TIMEOUT_SECONDS
+            loop.run_in_executor(checker_executor(), function, *args),
+            RUN_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError as exc:
         raise HTTPException(
-            status_code=504, detail=f"The check did not finish within {RUN_TIMEOUT_SECONDS} seconds"
+            status_code=504,
+            detail=f"The check did not finish within {RUN_TIMEOUT_SECONDS} seconds",
         ) from exc
     except HTTPException:
         raise
-    except Exception as exc:  # noqa: BLE001 - checker errors must reach the UI.
+    except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
@@ -478,7 +485,9 @@ async def application_lifespan(app):
         shutdown_executor()
 
 
-app = FastAPI(title="scenario-quality-checker", version="0.1.0", lifespan=application_lifespan)
+app = FastAPI(
+    title="scenario-quality-checker", version="0.1.0", lifespan=application_lifespan
+)
 
 STATIC_DIRECTORY.mkdir(parents=True, exist_ok=True)
 app.mount("/assets", StaticFiles(directory=STATIC_DIRECTORY), name="assets")
@@ -524,7 +533,8 @@ async def reject_oversized_requests(request, call_next):
         limit = MAX_UPLOAD_BYTES * (MAX_BATCH_FILES + 1)
         if declared and declared.isdigit() and int(declared) > limit:
             return JSONResponse(
-                {"detail": f"Request body exceeds the {limit} byte limit"}, status_code=413
+                {"detail": f"Request body exceeds the {limit} byte limit"},
+                status_code=413,
             )
     return await call_next(request)
 
@@ -626,24 +636,31 @@ async def check_scenario(
         input_directory.mkdir(parents=True, exist_ok=True)
 
         if scenario is not None and scenario.filename:
-            require_suffix(scenario.filename, ALLOWED_SCENARIO_SUFFIXES, "The scenario file")
+            require_suffix(
+                scenario.filename, ALLOWED_SCENARIO_SUFFIXES, "The scenario file"
+            )
             file_name = safe_upload_name(scenario.filename)
             scenario_path = input_directory / file_name
             await store_upload(scenario, scenario_path)
         elif example:
             source = EXAMPLE_DIRECTORY / safe_upload_name(example)
             if not source.is_file():
-                raise HTTPException(status_code=404, detail=f"Unknown example '{example}'")
+                raise HTTPException(
+                    status_code=404, detail=f"Unknown example '{example}'"
+                )
             file_name = source.name
             scenario_path = input_directory / file_name
             shutil.copy2(source, scenario_path)
         else:
             raise HTTPException(
-                status_code=400, detail="Provide a scenario file or the name of an example"
+                status_code=400,
+                detail="Provide a scenario file or the name of an example",
             )
 
         map_info = await link_map_upload(map, scenario_path, run_directory)
-        checker, plots = await in_worker(_check_scenario, scenario_path, limits, run_directory)
+        checker, plots = await in_worker(
+            _check_scenario, scenario_path, limits, run_directory
+        )
 
         run = Run(
             run_id=run_id,
@@ -683,7 +700,9 @@ def get_run_plot(request: Request, run_id: str, plot_name: str):
         raise HTTPException(status_code=404, detail=f"Unknown plot '{plot_name}'")
     path = run.directory / "plots" / filename
     if not path.is_file():
-        raise HTTPException(status_code=404, detail=f"Plot '{plot_name}' was not rendered")
+        raise HTTPException(
+            status_code=404, detail=f"Plot '{plot_name}' was not rendered"
+        )
     return FileResponse(path, media_type="image/png")
 
 
@@ -705,7 +724,9 @@ async def get_run_pdf(request: Request, run_id: str):
     run = get_run(request, run_id)
     path = await in_worker(_build_single_report, run, True)
     if not path.is_file():
-        raise HTTPException(status_code=500, detail="The PDF report could not be created")
+        raise HTTPException(
+            status_code=500, detail="The PDF report could not be created"
+        )
     return FileResponse(path, media_type="application/pdf", filename=path.name)
 
 
@@ -715,7 +736,9 @@ async def get_run_csv(request: Request, run_id: str):
     run = get_run(request, run_id)
     path = await in_worker(_build_single_report, run, False)
     if not path.is_file():
-        raise HTTPException(status_code=500, detail="The CSV report could not be created")
+        raise HTTPException(
+            status_code=500, detail="The CSV report could not be created"
+        )
     return FileResponse(path, media_type="text/csv", filename=path.name)
 
 
@@ -762,10 +785,14 @@ def _extract_zip(archive_path, destination):
                 with archive.open(info) as source, target.open("wb") as sink:
                     shutil.copyfileobj(source, sink)
     except zipfile.BadZipFile as exc:
-        raise HTTPException(status_code=400, detail="The archive could not be read") from exc
+        raise HTTPException(
+            status_code=400, detail="The archive could not be read"
+        ) from exc
 
     return sorted(
-        target for _, target in members if target.suffix.lower() in ALLOWED_SCENARIO_SUFFIXES
+        target
+        for _, target in members
+        if target.suffix.lower() in ALLOWED_SCENARIO_SUFFIXES
     )
 
 
@@ -773,7 +800,9 @@ def _check_batch(scenario_paths, thresholds, batch_directory):
     """Check every scenario of a batch. Executed on the worker thread."""
     checkers = []
     for scenario_path in scenario_paths:
-        checkers.append(_run_checker(scenario_path, thresholds, batch_directory / "tmp"))
+        checkers.append(
+            _run_checker(scenario_path, thresholds, batch_directory / "tmp")
+        )
     return checkers
 
 
@@ -799,10 +828,13 @@ async def check_batch(
 
     uploads = [upload for upload in scenarios if upload.filename]
     if not uploads:
-        raise HTTPException(status_code=400, detail="Provide at least one scenario file")
+        raise HTTPException(
+            status_code=400, detail="Provide at least one scenario file"
+        )
     if len(uploads) > MAX_BATCH_FILES:
         raise HTTPException(
-            status_code=400, detail=f"At most {MAX_BATCH_FILES} files can be checked at once"
+            status_code=400,
+            detail=f"At most {MAX_BATCH_FILES} files can be checked at once",
         )
 
     async with session.lock:
@@ -830,13 +862,18 @@ async def check_batch(
                     scenario_paths.append(target)
 
         if not scenario_paths:
-            raise HTTPException(status_code=400, detail="No .xosc files found in the upload")
+            raise HTTPException(
+                status_code=400, detail="No .xosc files found in the upload"
+            )
         if len(scenario_paths) > MAX_BATCH_FILES:
             raise HTTPException(
-                status_code=400, detail=f"At most {MAX_BATCH_FILES} scenarios can be checked at once"
+                status_code=400,
+                detail=f"At most {MAX_BATCH_FILES} scenarios can be checked at once",
             )
 
-        checkers = await in_worker(_check_batch, scenario_paths, limits, batch_directory)
+        checkers = await in_worker(
+            _check_batch, scenario_paths, limits, batch_directory
+        )
 
         rows = []
         for scenario_path, checker in zip(scenario_paths, checkers):
@@ -898,7 +935,9 @@ async def get_batch_pdf(request: Request, batch_id: str):
     batch = get_batch(request, batch_id)
     path = await in_worker(_build_batch_report, batch, True)
     if not path.is_file():
-        raise HTTPException(status_code=500, detail="The aggregated PDF could not be created")
+        raise HTTPException(
+            status_code=500, detail="The aggregated PDF could not be created"
+        )
     return FileResponse(path, media_type="application/pdf", filename=path.name)
 
 
@@ -908,7 +947,9 @@ async def get_batch_csv(request: Request, batch_id: str):
     batch = get_batch(request, batch_id)
     path = await in_worker(_build_batch_report, batch, False)
     if not path.is_file():
-        raise HTTPException(status_code=500, detail="The aggregated CSV could not be created")
+        raise HTTPException(
+            status_code=500, detail="The aggregated CSV could not be created"
+        )
     return FileResponse(path, media_type="text/csv", filename=path.name)
 
 

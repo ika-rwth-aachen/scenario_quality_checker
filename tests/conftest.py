@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from fastapi.testclient import TestClient
 import pytest
+from fastapi.testclient import TestClient
 
 from quality_checker.webapp.server import app
 
