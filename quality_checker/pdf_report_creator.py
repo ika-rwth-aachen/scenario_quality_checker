@@ -11,6 +11,10 @@ from matplotlib.lines import Line2D
 from .config import Config
 from .pdf import *
 
+from .config import Config
+from .thresholds import Thresholds
+
+
 
 def create_report_single(checker, title, out_path):
     """
@@ -691,23 +695,28 @@ def create_report_single(checker, title, out_path):
         pdf.output(out)
 
 
-def add_error_warning_lines(ax, variable):
+def add_error_warning_lines(ax, variable, thresholds=None):
     """
     Add horizontal lines for error and warning thresholds with
     collision-aware label placement.
+    Args:
+        ax: Axes to draw on.
+        variable: 'acceleration' or 'swimangle'.
+        thresholds: Optional Thresholds instance, defaults to the Config values.
     """
-    if variable == "acceleration":
-        error_threshold = Config.ACCELERATION_ERROR_THRESHOLD
-        warning_threshold = Config.ACCELERATION_WARNING_THRESHOLD
-    elif variable == "swimangle":
-        error_threshold = Config.SWIMANGLE_ERROR_THRESHOLD
-        warning_threshold = Config.SWIMANGLE_WARNING_THRESHOLD
+    thresholds = thresholds or Thresholds.default()
+    if variable == 'acceleration':
+        error_threshold = thresholds.acceleration_error
+        warning_threshold = thresholds.acceleration_warning
+    elif variable == 'swimangle':
+        error_threshold = thresholds.sideslip_error
+        warning_threshold = thresholds.sideslip_warning
     else:
         raise ValueError(f"Unsupported variable for thresholds: {variable!r}")
 
-    err_col = tuple(np.array(Config.ERROR_COLOR) / 255)
-    warn_col = tuple(np.array(Config.WARNING_COLOR) / 255)
-
+    err_col = tuple(np.array(Config.ERROR_COLOR)/255)
+    warn_col = tuple(np.array(Config.WARNING_COLOR)/255)
+    
     # Calculate current axis height to determine if text will overlap
     ymin, ymax = ax.get_ylim()
     y_range = ymax - ymin
@@ -716,16 +725,16 @@ def add_error_warning_lines(ax, variable):
     # the labels will likely overlap.
     padding = y_range * 0.03  # 3% of the view height for spacing
 
-    thresholds = [
-        (error_threshold, "Error", err_col, padding),
-        (warning_threshold, "Warning", warn_col, 0),  # Base line
-        (-warning_threshold, "Warning", warn_col, 0),  # Base line
-        (-error_threshold, "Error", err_col, -padding),
+    threshold_lines = [
+        (error_threshold, 'Error', err_col, padding),
+        (warning_threshold, 'Warning', warn_col, 0), # Base line
+        (-warning_threshold, 'Warning', warn_col, 0), # Base line
+        (-error_threshold, 'Error', err_col, -padding)
     ]
 
     trans = ax.get_yaxis_transform()
 
-    for val, label, col, offset_val in thresholds:
+    for val, label, col, offset_val in threshold_lines:
         # Draw the line at the exact threshold
         ax.axhline(val, linestyle=(0, (5, 10)), color=col)
 
@@ -762,8 +771,9 @@ def plot_dynamics(checker, analyzed_dynamics, n_plot_entities=5, output_dir=None
     ylabel_swimangle = "Swim angle [rad]"
     xlabel = "Time [s]"
     # Output directory for generated PNG files (defaults to current directory)
-    output_dir = Path(output_dir) if output_dir else Path(".")
-
+    output_dir = Path(output_dir) if output_dir else Path('.')
+    thresholds = getattr(checker, 'thresholds', None) or Thresholds.default()
+	
     # Position and time data for all entities
     dynamic_data = checker._get_dynamic_data()
     if len(dynamic_data) == 0:
@@ -818,95 +828,33 @@ def plot_dynamics(checker, analyzed_dynamics, n_plot_entities=5, output_dir=None
             )
         else:
             # Only plot non-ego entities when thresholds are exceeded
-            if np.any(np.abs(df.acceleration) > Config.ACCELERATION_ERROR_THRESHOLD) or np.any(
-                np.abs(df.acceleration) > Config.ACCELERATION_WARNING_THRESHOLD
-            ):
-                max_value_speed = plot_variable(
-                    speed_ax,
-                    df,
-                    "speed",
-                    entity_name,
-                    xlabel,
-                    ylabel_speed,
-                    max_value_speed,
-                    save=False,
-                )
-                max_value_acceleration = plot_variable(
-                    acceleration_ax,
-                    df,
-                    "acceleration",
-                    entity_name,
-                    xlabel,
-                    ylabel_acceleration,
-                    max_value_acceleration,
-                    save=False,
-                )
+            if np.any(np.abs(df.acceleration) > thresholds.acceleration_warning):
+                max_value_speed = plot_variable(speed_ax, df, 'speed', entity_name, xlabel, ylabel_speed, max_value_speed, save=False)
+                max_value_acceleration = plot_variable(acceleration_ax, df, 'acceleration', entity_name, xlabel, ylabel_acceleration, max_value_acceleration, save=False)
 
-            if np.any(np.abs(df.swimangle) > Config.SWIMANGLE_ERROR_THRESHOLD) or np.any(np.abs(df.swimangle) > Config.SWIMANGLE_WARNING_THRESHOLD):
-                max_value_swimangle = plot_variable(
-                    swimangle_ax,
-                    df,
-                    "swimangle",
-                    entity_name,
-                    xlabel,
-                    ylabel_swimangle,
-                    max_value_swimangle,
-                    save=False,
-                )
-        # Close the current figure context to avoid resource leaks in long runs.
-        mpl.pyplot.close()
+            if np.any(np.abs(df.swimangle) > thresholds.sideslip_warning):
+                max_value_swimangle = plot_variable(swimangle_ax, df, 'swimangle', entity_name, xlabel, ylabel_swimangle, max_value_swimangle, save=False)
 
-    speed_ax.set_title("Speed over time")
-    select_and_plot_extra_entities(
-        dynamic_data,
-        "speed",
-        speed_ax,
-        analyzed_dynamics["acceleration_errors"],
-        analyzed_dynamics["acceleration_warnings"],
-        n_plot_entities,
-        checker,
-        xlabel=xlabel,
-        ylabel=ylabel_speed,
-        max_value=max_value_speed,
-        save=False,
-    )
-    speed_plot.savefig(output_dir / "speed_plot.png")
+    speed_ax.set_title('Speed over time')
+    select_and_plot_extra_entities(dynamic_data, 'speed', speed_ax, analyzed_dynamics["acceleration_errors"], analyzed_dynamics["acceleration_warnings"], n_plot_entities, checker, xlabel=xlabel, ylabel=ylabel_speed, max_value=max_value_speed, save=False)
+    speed_plot.savefig(output_dir / 'speed_plot.png')
 
     # Acceleration
-    select_and_plot_extra_entities(
-        dynamic_data,
-        "acceleration",
-        acceleration_ax,
-        analyzed_dynamics["acceleration_errors"],
-        analyzed_dynamics["acceleration_warnings"],
-        n_plot_entities,
-        checker,
-        xlabel=xlabel,
-        ylabel=ylabel_acceleration,
-        max_value=max_value_acceleration,
-        save=False,
-    )
-    acceleration_ax.set_title("Acceleration over time")
-    add_error_warning_lines(acceleration_ax, "acceleration")
-    acceleration_plot.savefig(output_dir / "acceleration_plot.png")
+    select_and_plot_extra_entities(dynamic_data, 'acceleration', acceleration_ax, analyzed_dynamics["acceleration_errors"], analyzed_dynamics["acceleration_warnings"], n_plot_entities, checker, xlabel=xlabel, ylabel=ylabel_acceleration, max_value=max_value_acceleration, save=False)
+    acceleration_ax.set_title('Acceleration over time')
+    add_error_warning_lines(acceleration_ax, 'acceleration', thresholds)
+    acceleration_plot.savefig(output_dir / 'acceleration_plot.png')
 
     # Swim angle
-    select_and_plot_extra_entities(
-        dynamic_data,
-        "swimangle",
-        swimangle_ax,
-        analyzed_dynamics["swimangle_errors"],
-        analyzed_dynamics["swimangle_warnings"],
-        n_plot_entities,
-        checker,
-        xlabel=xlabel,
-        ylabel=ylabel_swimangle,
-        max_value=max_value_swimangle,
-        save=False,
-    )
-    swimangle_ax.set_title("Swim angle over time")
-    add_error_warning_lines(swimangle_ax, "swimangle")
-    swimangle_plot.savefig(output_dir / "swimangle_plot.png")
+    select_and_plot_extra_entities(dynamic_data, 'swimangle', swimangle_ax, analyzed_dynamics["swimangle_errors"], analyzed_dynamics["swimangle_warnings"], n_plot_entities, checker, xlabel=xlabel, ylabel=ylabel_swimangle, max_value=max_value_swimangle, save=False)
+    swimangle_ax.set_title('Swim angle over time')
+    add_error_warning_lines(swimangle_ax, 'swimangle', thresholds)
+    swimangle_plot.savefig(output_dir / 'swimangle_plot.png')
+
+    # Close the figures explicitly; a long-running server would otherwise
+    # accumulate them in pyplot's global registry.
+    for figure in (speed_plot, acceleration_plot, swimangle_plot):
+        plt.close(figure)
 
 
 def create_report_multiple(title, file_information, out_path, print_log=False):
@@ -927,9 +875,9 @@ def create_report_multiple(title, file_information, out_path, print_log=False):
     pdf = PDF(title)
     pdf.add_page()
 
-    pdf.create_textbox(
-        "Tests", relative_position=[0, title_separation], font=Config.PDF_FONT_TITLE
-    )
+    Path(out_path).mkdir(parents=True, exist_ok=True)
+
+    pdf.create_textbox('Tests', relative_position=[0, title_separation], font=Config.PDF_FONT_TITLE)
     # Header row uses manual spacing to align columns in a monospaced layout.
     pdf.create_textbox(
         " " * 10
@@ -950,88 +898,24 @@ def create_report_multiple(title, file_information, out_path, print_log=False):
 
     # file = (path, xml_loadable, xsd_valid, simulation_status, n_file_issues, n_dynamic_issues)
     for file in file_information:
-        if (
-            file[1]
-            and file[2]
-            and file[4] == 0
-            and file[5] == 0
-            and file[3] != "failed"
-        ):
-            pdf.create_textbox(
-                text="     4",
-                relative_position=[0, subtitle_separation],
-                font=Config.PDF_FONT_DING_SUB,
-            )
-            pdf.create_textbox(
-                "          " + file[0].parts[-1],
-                relative_position=[0, 2 * subtitle_separation],
-                font=Config.PDF_FONT_SUBTITLE_REGULAR,
-            )
-            pdf.create_textbox(
-                (" " * 100) + "4" * int(file[1]),
-                relative_position=[0, 2 * subtitle_separation],
-                font=Config.PDF_FONT_DING_SUB,
-            )
-            pdf.create_textbox(
-                (" " * 130) + "4" * int(file[2]),
-                relative_position=[0, 2 * subtitle_separation],
-                font=Config.PDF_FONT_DING_SUB,
-            )
-            pdf.create_textbox(
-                (" " * 148) + str(file[3]),
-                relative_position=[0, 2 * subtitle_separation],
-                font=Config.PDF_FONT_SUBTITLE_REGULAR,
-            )
-            pdf.create_textbox(
-                (" " * 178) + "0",
-                relative_position=[0, 2 * subtitle_separation],
-                font=Config.PDF_FONT_SUBTITLE_REGULAR,
-            )
-            pdf.create_textbox(
-                (" " * 205) + "0",
-                relative_position=[0, 2 * subtitle_separation],
-                font=Config.PDF_FONT_SUBTITLE_REGULAR,
-            )
+        if file[1] and file[2] and file[4] == 0 and file[5] == 0 and file[3] != 'failed':
+            pdf.create_textbox(text="     4", relative_position=[0, subtitle_separation], font=Config.PDF_FONT_DING_SUB)
+            pdf.create_textbox('          ' + Path(file[0]).name, relative_position=[0, 2*subtitle_separation], font=Config.PDF_FONT_SUBTITLE_REGULAR)
+            pdf.create_textbox((" " * 100) + "4" * int(file[1]), relative_position=[0, 2*subtitle_separation], font=Config.PDF_FONT_DING_SUB)
+            pdf.create_textbox((" " * 130) + "4" * int(file[2]), relative_position=[0, 2*subtitle_separation], font=Config.PDF_FONT_DING_SUB)
+            pdf.create_textbox((" " * 148) + str(file[3]), relative_position=[0, 2*subtitle_separation], font=Config.PDF_FONT_SUBTITLE_REGULAR)
+            pdf.create_textbox((" " * 178) + str('0'), relative_position=[0, 2*subtitle_separation], font=Config.PDF_FONT_SUBTITLE_REGULAR)
+            pdf.create_textbox((" " * 205) + str('0'), relative_position=[0, 2*subtitle_separation], font=Config.PDF_FONT_SUBTITLE_REGULAR)
         else:
             # At least one check failed or issues are present.
-            pdf.create_textbox(
-                text="     8",
-                relative_position=[0, subtitle_separation],
-                font=Config.PDF_FONT_DING_SUB,
-                color=Config.ERROR_COLOR,
-            )
-            pdf.create_textbox(
-                " " * 10 + file[0].parts[-1],
-                relative_position=[0, 2 * subtitle_separation],
-                font=Config.PDF_FONT_SUBTITLE_REGULAR,
-            )
-            pdf.create_textbox(
-                (" " * 100) + ("4" * int(file[1])) + ("8" * (1 - int(file[1]))),
-                relative_position=[0, 2 * subtitle_separation],
-                font=Config.PDF_FONT_DING_SUB,
-            )
-            pdf.create_textbox(
-                (" " * 130) + ("4" * int(file[2])) + ("8" * (1 - int(file[2]))),
-                relative_position=[0, 2 * subtitle_separation],
-                font=Config.PDF_FONT_DING_SUB,
-            )
-            sim_color = Config.ERROR_COLOR if file[3] == "failed" else None
-            pdf.create_textbox(
-                (" " * 148) + str(file[3]),
-                relative_position=[0, 2 * subtitle_separation],
-                font=Config.PDF_FONT_SUBTITLE_REGULAR,
-                color=sim_color,
-            )
-            pdf.create_textbox(
-                (" " * 178) + str(file[4]),
-                relative_position=[0, 2 * subtitle_separation],
-                font=Config.PDF_FONT_SUBTITLE_REGULAR,
-            )
-            pdf.create_textbox(
-                (" " * 205) + str(file[5]),
-                relative_position=[0, 2 * subtitle_separation],
-                font=Config.PDF_FONT_SUBTITLE_REGULAR,
-            )
+            pdf.create_textbox(text="     8", relative_position=[0, subtitle_separation], font=Config.PDF_FONT_DING_SUB, color=Config.ERROR_COLOR)
+            pdf.create_textbox(' ' * 10 + Path(file[0]).name, relative_position=[0, 2*subtitle_separation], font=Config.PDF_FONT_SUBTITLE_REGULAR)
+            pdf.create_textbox((" " * 100) + ("4" * int(file[1])) + ("8" * (1-int(file[1]))), relative_position=[0, 2*subtitle_separation], font=Config.PDF_FONT_DING_SUB)
+            pdf.create_textbox((" " * 130) + ("4" * int(file[2])) + ("8" * (1-int(file[2]))), relative_position=[0, 2*subtitle_separation], font=Config.PDF_FONT_DING_SUB)
+            sim_color = Config.ERROR_COLOR if file[3] == 'failed' else None
+            pdf.create_textbox((" " * 148) + str(file[3]), relative_position=[0, 2*subtitle_separation], font=Config.PDF_FONT_SUBTITLE_REGULAR, color=sim_color)
+            pdf.create_textbox((" " * 178) + str(file[4]), relative_position=[0, 2*subtitle_separation], font=Config.PDF_FONT_SUBTITLE_REGULAR)
+            pdf.create_textbox((" " * 205) + str(file[5]), relative_position=[0, 2*subtitle_separation], font=Config.PDF_FONT_SUBTITLE_REGULAR)
         pdf.create_line(color=(0, 0, 0), relative_position=[0, -2])
 
     out = out_path / Path("aggregate_report.pdf")
@@ -1084,9 +968,9 @@ def plot_variable(
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     if save:
-        plt.savefig(str(variable) + "_" + entity_name + ".png")
-    # Close the global pyplot state to avoid accumulating figures.
-    mpl.pyplot.close()
+        plt.savefig(str(variable) + '_' + entity_name + '.png')
+    # No close here: this function draws onto a caller-owned Axes, so closing
+    # the current pyplot figure would detach the figure still being built.
 
     return max_value
 
@@ -1122,7 +1006,7 @@ def plot_fading_line(
             c=colormap(int(255 / n_segments) * segment),
             zorder=zorder,
         )
-    mpl.pyplot.close()
+    # No close here: the Axes belongs to the caller's figure.
 
 
 def plot_vehicle_paths(
@@ -1330,8 +1214,8 @@ def plot_vehicle_paths(
     paths_ax.set_title("Vehicle paths")
 
     if save:
-        paths_plot.savefig(output_dir / "vehicle_paths.png")
-    mpl.pyplot.close()
+        paths_plot.savefig(output_dir / 'vehicle_paths.png')
+    plt.close(paths_plot)
 
 
 def select_and_plot_extra_entities(

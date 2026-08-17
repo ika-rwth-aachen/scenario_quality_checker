@@ -37,6 +37,7 @@ At a high level, the checker:
 ## Outputs
 - Per-scenario report: PDF summary and/or CSV detail
 - Aggregated report: rollup table across a folder of `.xosc` files
+- Web interface: findings, plots and reports in the browser (see below)
 
 ## Installation
 Install Python 3.9+ (Conda recommended) and the dependencies.
@@ -106,6 +107,79 @@ Options:
 - `--esmini-path`: optional path to an `esmini` executable. If provided,
   each scenario is also simulated headless and the resulting trajectories
   are used for dynamic checks and trajectory plots.
+
+### Common options
+Both commands also accept:
+
+- `--work-dir`: directory for intermediate files (default `./results/tmp`)
+- `--acceleration-warning`, `--acceleration-error`: acceleration limits in m/s²
+- `--sideslip-warning`, `--sideslip-error`: sideslip (swim) angle limits in rad
+
+Omitted limits fall back to the values in `quality_checker/config.py`.
+
+## Web interface
+The checker also ships a self-contained web application: upload a scenario and
+read the findings, the dynamics plots and the reports in the browser. No
+scenario data is persisted — every upload lives in a per-session temporary
+directory that is removed once the session expires.
+
+```bash
+pip install ".[web]"
+python -m quality_checker.webapp.server
+```
+
+Then open http://localhost:8001. Set `SQC_PORT` to serve a different port.
+
+With Docker:
+
+```bash
+docker compose -f docker/docker-compose.yml up --build
+```
+
+### What the web interface offers
+- **Single scenario**: upload one `.xosc`, optionally with the OpenDRIVE map it
+  references, and get the status, metadata, findings grouped by severity (each
+  dynamics finding with the entity, its measured peak, the time of the peak and
+  the limit it exceeded), the four plots, and the PDF/CSV report.
+- **Batch**: upload several `.xosc` files or one `.zip` and get the aggregated
+  table, the aggregated PDF/CSV, and a drill-down into any single file.
+- **Thresholds**: override the acceleration and sideslip limits per run without
+  affecting anyone else using the same server.
+- **Examples**: check any of the bundled `example_files/` without uploading.
+
+### HTTP API
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/health` | Service status |
+| GET | `/api/thresholds` | Default limits and their units |
+| GET | `/api/examples` | Names of the bundled example scenarios |
+| POST | `/api/checks` | Check one scenario (`scenario`, optional `map`, optional `example`, optional limits) |
+| GET | `/api/runs/{id}` | Structured result of a run |
+| GET | `/api/runs/{id}/plots/{name}.png` | One plot: `speed`, `acceleration`, `swimangle`, `paths` |
+| GET | `/api/runs/{id}/report.pdf` \| `report.csv` | Report for a run |
+| POST | `/api/batches` | Check several scenarios (`scenarios`, optional limits) |
+| GET | `/api/batches/{id}/report.pdf` \| `report.csv` | Aggregated report |
+
+Runs are readable only by the browser session that created them.
+
+### Configuration
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SQC_PORT` | `8001` | Port to serve on |
+| `SQC_MAX_UPLOAD_BYTES` | `20971520` | Per-file upload limit |
+| `SQC_MAX_BATCH_FILES` | `50` | Files accepted in one batch |
+| `SQC_MAX_ZIP_UNCOMPRESSED_BYTES` | `209715200` | Expanded size limit for archives |
+| `SQC_SESSION_TTL_SECONDS` | `3600` | How long results stay available |
+| `SQC_MAX_SESSIONS` | `200` | Concurrent sessions kept before evicting the least recently used |
+| `SQC_RUN_TIMEOUT_SECONDS` | `120` | Time limit for a single check |
+| `SQC_SECURE_COOKIES` | `auto` | `auto` follows the request scheme; `true`/`false` force it |
+
+Checks run on a single worker thread, because the checker and matplotlib keep
+global state. Put the app behind a reverse proxy and run several containers if
+you need throughput. Instances may share the working root
+(`$TMPDIR/scenario-quality-checker-web`): each session owns its own subdirectory,
+and startup cleanup only removes leftovers older than `SQC_SESSION_TTL_SECONDS`,
+so a restart never deletes a sibling instance's uploads.
 
 ## Output locations
 Make sure `--out-path` exists when running `quality_check_single`.

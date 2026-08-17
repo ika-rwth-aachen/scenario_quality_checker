@@ -1,0 +1,26 @@
+services:
+  scenario-quality-checker-web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: ${SQC_IMAGE:-scenario-quality-checker:latest}
+    ports:
+      - "8001:8001"
+    environment:
+      SQC_PORT: 8001
+      SQC_MAX_UPLOAD_BYTES: ${SQC_MAX_UPLOAD_BYTES:-20971520}
+      SQC_MAX_BATCH_FILES: ${SQC_MAX_BATCH_FILES:-50}
+      SQC_MAX_ZIP_UNCOMPRESSED_BYTES: ${SQC_MAX_ZIP_UNCOMPRESSED_BYTES:-209715200}
+      SQC_SESSION_TTL_SECONDS: ${SQC_SESSION_TTL_SECONDS:-3600}
+      SQC_MAX_SESSIONS: ${SQC_MAX_SESSIONS:-200}
+      SQC_RUN_TIMEOUT_SECONDS: ${SQC_RUN_TIMEOUT_SECONDS:-120}
+      SQC_SECURE_COOKIES: ${SQC_SECURE_COOKIES:-auto}
+      HOME: /tmp/scenario-quality-checker
+    # Uploaded scenarios and rendered reports live under the system temp
+    # directory, so nothing has to be persisted between runs.
+    tmpfs:
+      - /tmp
+    cpus: 2.0
+    mem_limit: 2g
+    pids_limit: 256
+    restart: unless-stopped

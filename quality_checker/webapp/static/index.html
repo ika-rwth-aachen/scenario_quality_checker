@@ -1,0 +1,102 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>scenario quality checker</title>
+<link rel="icon" href="/branding/scenario_quality_checker.png">
+<link rel="stylesheet" href="/assets/style.css">
+
+<header>
+  <span class="brand">scenario.quality.checker</span>
+  <span class="tabs">
+    <button id="tab-single" class="tab active" type="button">Single scenario</button>
+    <button id="tab-batch" class="tab" type="button">Batch</button>
+  </span>
+  <span id="status" class="status"></span>
+</header>
+
+<main>
+  <section class="panel form-panel">
+    <div class="panel-title">Check a scenario</div>
+
+    <form id="check-form">
+      <div id="single-inputs">
+        <div class="field">
+          <label for="scenario-input">OpenSCENARIO file (.xosc)</label>
+          <div class="file-row">
+            <input id="scenario-input" type="file" accept=".xosc">
+            <button id="scenario-remove" type="button" class="remove" hidden>Remove</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="map-input">OpenDRIVE map (.xodr, optional)</label>
+          <div class="file-row">
+            <input id="map-input" type="file" accept=".xodr,.xml">
+            <button id="map-remove" type="button" class="remove" hidden>Remove</button>
+          </div>
+          <small>Needed to resolve lane positions and draw the road network.</small>
+        </div>
+
+        <div class="field">
+          <label for="example-input">&hellip; or pick a bundled example</label>
+          <select id="example-input">
+            <option value="">None</option>
+          </select>
+          <small id="example-hint" hidden>The uploaded file will be checked instead of an example.</small>
+        </div>
+      </div>
+
+      <div id="batch-inputs" hidden>
+        <div class="field">
+          <label for="batch-input">Scenario files or a .zip archive</label>
+          <div class="file-row">
+            <input id="batch-input" type="file" accept=".xosc,.xodr,.zip" multiple>
+            <button id="batch-remove" type="button" class="remove" hidden>Remove</button>
+          </div>
+          <small>Every .xosc in the selection is checked and summarized in one table.</small>
+        </div>
+      </div>
+
+      <details class="thresholds">
+        <summary>Thresholds</summary>
+        <label class="field inline">
+          <span>Acceleration warning [m/s&sup2;]</span>
+          <input id="acceleration-warning" type="number" step="any" min="0">
+        </label>
+        <label class="field inline">
+          <span>Acceleration error [m/s&sup2;]</span>
+          <input id="acceleration-error" type="number" step="any" min="0">
+        </label>
+        <label class="field inline">
+          <span>Sideslip angle warning [rad]</span>
+          <input id="sideslip-warning" type="number" step="any" min="0">
+        </label>
+        <label class="field inline">
+          <span>Sideslip angle error [rad]</span>
+          <input id="sideslip-error" type="number" step="any" min="0">
+        </label>
+        <button id="reset-thresholds" type="button" class="secondary">Reset to defaults</button>
+      </details>
+
+      <button id="submit" type="submit">Check quality</button>
+    </form>
+
+    <p id="error" class="error" hidden></p>
+  </section>
+
+  <section class="panel result-panel">
+    <div class="panel-title">
+      <span id="result-title">Result</span>
+      <span class="result-actions" id="result-actions" hidden>
+        <label class="filter"><input id="show-errors" type="checkbox" checked> Errors</label>
+        <label class="filter"><input id="show-warnings" type="checkbox" checked> Warnings</label>
+      </span>
+    </div>
+    <div id="result">
+      <p class="placeholder">Upload an OpenSCENARIO file to see its findings, dynamics plots and reports.</p>
+    </div>
+  </section>
+</main>
+
+<script src="/assets/app.js"></script>
+<script src="/assets/render-single.js"></script>
+<script src="/assets/render-batch.js"></script>

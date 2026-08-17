@@ -26,8 +26,20 @@ dependencies = [
     "xmlschema>=3.4.4",
 ]
 
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+]
+
 [project.scripts]
 scenario-quality-checker = "quality_checker.__main__:app"
+scenario-quality-checker-web = "quality_checker.webapp.server:main"
 
 [project.urls]
 Repository = "https://github.com/ika-rwth-aachen/scenario-quality-checker"
@@ -37,4 +49,8 @@ where = ["."]
 exclude = ["assets", "example_files", "tests*"]
 
 [tool.setuptools.package-data]
-quality_checker = ["schemas/*.xsd"]
+quality_checker = ["schemas/*.xsd", "webapp/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -12,37 +12,103 @@ from xml.sax.handler import ContentHandler
 
 import numpy as np
 import pandas as pd
+from pathlib import Path
+import tempfile
+import threading
+import subprocess
+import shlex
+import shutil
+from scenariogeneration import xosc
 import scipy as sp
 import shapely
 import typer
+from uuid import uuid4
+
+from xml.sax.handler import ContentHandler
+from xml.sax import make_parser
+import xml.etree.ElementTree as ET
 import xmlschema
 from loguru import logger
 from scenariogeneration import xosc
 
-from .config import Config
 from .pdf import *
 from .pdf_report_creator import *
+from .thresholds import Thresholds
 from .xodr_position_resolver import OpenDrivePositionResolver
 
 # Default schema path relative to the package location
 DEFAULT_SCHEMA_PATH = Path(__file__).parent.parent / "quality_checker/schemas"
 
+# Header of the aggregated CSV export, shared by the CLI and the web app.
+AGGREGATE_CSV_HEADER = [
+    'scenario_file', 'xml_loadable', 'xsd_valid', 'simulation_status',
+    'n_file_errors', 'n_dynamic_errors',
+]
+
+# Parsed XSD schemas are expensive (60-106 KB each) and immutable, so they are
+# reused across files. Guarded by a lock because the web app checks batches from
+# a worker thread.
+_SCHEMA_CACHE = {}
+_SCHEMA_CACHE_LOCK = threading.Lock()
+
 app = typer.Typer()
 
 
+def load_schema(schema_file):
+    """
+    Return a parsed XMLSchema for a path, reusing previously parsed schemas.
+    Args:
+        schema_file: Path to an .xsd file.
+    return: xmlschema.XMLSchema instance.
+    """
+    cache_key = str(Path(schema_file).resolve())
+    with _SCHEMA_CACHE_LOCK:
+        schema = _SCHEMA_CACHE.get(cache_key)
+    if schema is None:
+        schema = xmlschema.XMLSchema(schema_file)
+        with _SCHEMA_CACHE_LOCK:
+            _SCHEMA_CACHE[cache_key] = schema
+    return schema
+
+
+def write_aggregate_csv(rows, out_path):
+    """
+    Write the aggregated summary rows to aggregate_data.csv.
+    Args:
+        rows: Iterable of summary rows as produced by to_summary_row().
+        out_path: Output directory for the CSV.
+    return: Path to the written CSV file.
+    """
+    out_path = Path(out_path)
+    out_path.mkdir(parents=True, exist_ok=True)
+    csv_file = out_path / 'aggregate_data.csv'
+    with open(csv_file, mode="w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(AGGREGATE_CSV_HEADER)
+        writer.writerows(list(rows))
+    return csv_file
+
+
 class FileQualityChecker:
-    def __init__(self, scenario_path, schema_path, esmini_path=None, print_log=False):
+    def __init__(self, scenario_path, schema_path, esmini_path=None, print_log=False,
+                 thresholds=None, work_dir=None):
         """
         Initialize the checker and run the full validation pipeline.
         Args:
             scenario_path: Path to the .xosc scenario file.
             schema_path: Path to the directory with XSD schemas.
-            use_simulation: Whether to use simulation for dynamic checks.
+            esmini_path: Path to the esmini executable. If given, simulation is
+                used to assess dynamics.
             print_log: Whether to emit log output.
+            thresholds: Optional Thresholds instance overriding the Config defaults.
+            work_dir: Optional directory for intermediate files. Defaults to
+                ./results/tmp relative to the current working directory.
         """
         self.file_path = scenario_path
         self.print_log = print_log
         self.esmini_path = esmini_path
+        self.thresholds = thresholds or Thresholds.default()
+        self.work_dir = Path(work_dir) if work_dir else Path.cwd() / "results" / "tmp"
 
         self.xml_loadable = False
         self.xsd_valid = False
@@ -154,15 +220,29 @@ class FileQualityChecker:
             schema_path: Path to the directory with XSD schemas.
         return: (is_valid, xsd_version)
         """
-        tree = ET.parse(self.file_path)
-        root = tree.getroot()
-
-        revMajor = root[0].attrib["revMajor"]
-        revMinor = root[0].attrib["revMinor"]
-        xsd_version = revMajor + "-" + revMinor
-
         # Reset stored errors on each validation run.
         self.xsd_errors = []
+
+        # The header is the only place the version is declared. A file that
+        # parses as XML can still be missing it, so report that as a finding
+        # instead of raising out of the constructor.
+        try:
+            tree = ET.parse(self.file_path)
+            root = tree.getroot()
+            header = root.find('FileHeader')
+            if header is None:
+                header = root[0]
+            revMajor = header.attrib['revMajor']
+            revMinor = header.attrib['revMinor']
+            int(revMajor)
+        except Exception as e:
+            msg = f"Could not read the OpenSCENARIO version from the file header: {e}"
+            self.xsd_errors.append(msg)
+            if self.print_log:
+                logger.error(msg)
+            return (False, None)
+
+        xsd_version = revMajor + '-' + revMinor
 
         # Schema files exist for v1.x only; v2+ is treated as unsupported here.
         if int(revMajor) < 2:
@@ -182,7 +262,7 @@ class FileQualityChecker:
                 logger.error(msg)
             return (False, xsd_version)
 
-        xsd = xmlschema.XMLSchema(schema_file)
+        xsd = load_schema(schema_file)
         is_valid = xsd.is_valid(self.file_path)
 
         # If validation fails, collect and log detailed errors.
@@ -247,13 +327,13 @@ class FileQualityChecker:
 
         updated_content = self._replace_parameters_in_content(content, parameters)
 
-        # Write the processed scenario into the persistent results/tmp folder
-        # to avoid OS-level temp paths that might be hard to inspect.
-        project_root = Path.cwd()
-        tmp_root = project_root / "results" / "tmp"
+        # Write the processed scenario into the working directory rather than an
+        # OS-level temp path, so it stays inspectable. The name carries a unique
+        # suffix because several checkers may share one working directory.
+        tmp_root = self.work_dir
         tmp_root.mkdir(parents=True, exist_ok=True)
 
-        temp_path = tmp_root / f"processed_{Path(self.file_path).name}"
+        temp_path = tmp_root / f"processed_{uuid4().hex}_{Path(self.file_path).name}"
         with open(temp_path, mode="w", encoding="utf-8") as temp:
             temp.write(updated_content)
         return temp_path
@@ -349,33 +429,17 @@ class FileQualityChecker:
             df = self._build_dynamic_data_df(positions, times)
             df = self._calculate_acceleration_swimangle(df)
 
-            if "ego" in entity_name:
-                if np.any(
-                    np.abs(df.acceleration) > Config.ACCELERATION_ERROR_THRESHOLD
-                ):
-                    acceleration_errors.append(entity_name)
-                elif np.any(
-                    np.abs(df.acceleration) > Config.ACCELERATION_WARNING_THRESHOLD
-                ):
-                    acceleration_warnings.append(entity_name)
+            # Ego and non-ego entities are assessed against the same limits.
+            if np.any(np.abs(df.acceleration) > self.thresholds.acceleration_error):
+                acceleration_errors.append(entity_name)
+            elif np.any(np.abs(df.acceleration) > self.thresholds.acceleration_warning):
+                acceleration_warnings.append(entity_name)
 
-                if np.any(np.abs(df.swimangle) > Config.SWIMANGLE_ERROR_THRESHOLD):
-                    swimangle_errors.append(entity_name)
-                elif np.any(np.abs(df.swimangle) > Config.SWIMANGLE_WARNING_THRESHOLD):
-                    swimangle_warnings.append(entity_name)
-            else:
-                if np.any(
-                    np.abs(df.acceleration) > Config.ACCELERATION_ERROR_THRESHOLD
-                ):
-                    acceleration_errors.append(entity_name)
-                elif np.any(
-                    np.abs(df.acceleration) > Config.ACCELERATION_WARNING_THRESHOLD
-                ):
-                    acceleration_warnings.append(entity_name)
-                if np.any(np.abs(df.swimangle) > Config.SWIMANGLE_ERROR_THRESHOLD):
-                    swimangle_errors.append(entity_name)
-                elif np.any(np.abs(df.swimangle) > Config.SWIMANGLE_WARNING_THRESHOLD):
-                    swimangle_warnings.append(entity_name)
+            if np.any(np.abs(df.swimangle) > self.thresholds.sideslip_error):
+                swimangle_errors.append(entity_name)
+            elif np.any(np.abs(df.swimangle) > self.thresholds.sideslip_warning):
+                swimangle_warnings.append(entity_name)
+
 
         return (
             acceleration_errors,
@@ -472,13 +536,14 @@ class FileQualityChecker:
         headless mode on the current scenario file and writes a CSV log
         which is then parsed for dynamic checks.
         """
-        # Use a persistent temp folder under results/tmp for easier
-        # inspection of intermediate files and logs.
-        project_root = Path.cwd()
-        tmp_root = project_root / "results" / "tmp"
+        # Use a persistent working directory for easier inspection of
+        # intermediate files and logs. The names carry a unique suffix so
+        # several checkers can share one working directory.
+        tmp_root = self.work_dir
         tmp_root.mkdir(parents=True, exist_ok=True)
+        run_token = uuid4().hex
 
-        scenario_tmp = tmp_root / "scenario_for_esmini.xosc"
+        scenario_tmp = tmp_root / f"scenario_for_esmini_{run_token}.xosc"
         shutil.copy2(self.file_path, scenario_tmp)
 
         # Optionally adjust RoadNetwork -> LogicFile so that any referenced
@@ -532,7 +597,7 @@ class FileQualityChecker:
             # to the plain copied scenario file.
             pass
 
-        log_file = tmp_root / "esmini_log.csv"
+        log_file = tmp_root / f"esmini_log_{run_token}.csv"
 
         cmd = [
             self.esmini_path,
@@ -1194,28 +1259,28 @@ class FileQualityChecker:
         if self.print_log:
             logger.info(f"Report created: {out_path}")
 
-    def create_csv(self, name, out_path):
+    def create_csv(self, name, out_path, scenario_name=None):
         """
         Write a CSV report with metadata, file errors, and dynamics.
         Args:
             name: Base filename for the CSV.
             out_path: Output directory for the CSV.
+            scenario_name: Value for the scenario_file column. Defaults to the
+                full path; callers that serve the CSV to someone else pass the
+                plain file name instead.
         """
-        csv_file = out_path / Path(name + ".csv")
+        out_path = Path(out_path)
+        out_path.mkdir(parents=True, exist_ok=True)
+        csv_file = out_path / Path(name + '.csv')
         with open(csv_file, mode="w", newline="") as file:
             writer = csv.writer(file)
-            writer.writerow(["scenario_file", self.file_path])
-            writer.writerow(["xml_loadable", self.xml_loadable])
-            writer.writerow(["xsd_valid", self.xsd_valid])
-            writer.writerow(
-                [
-                    "version",
-                    self.version.replace("-", ".") if self.version else self.version,
-                ]
-            )
-            writer.writerow(["author", self.author])
-            writer.writerow(["date", self.date])
-            writer.writerow(["simulation_status", self.simulation_status])
+            writer.writerow(['scenario_file', scenario_name or self.file_path])
+            writer.writerow(['xml_loadable', self.xml_loadable])
+            writer.writerow(['xsd_valid', self.xsd_valid])
+            writer.writerow(['version', self.version.replace('-', '.') if self.version else self.version])
+            writer.writerow(['author', self.author])
+            writer.writerow(['date', self.date])
+            writer.writerow(['simulation_status', self.simulation_status])
             for road_user, count in self.road_user_counts.items():
                 writer.writerow([road_user, count])
 
@@ -1271,21 +1336,37 @@ def quality_check_single(
     out_pdf: bool = typer.Option(False),
     out_csv: bool = typer.Option(False),
     print_log: bool = typer.Option(False),
-):
+    acceleration_warning: float = typer.Option(None, help="Acceleration warning limit in m/s^2"),
+    acceleration_error: float = typer.Option(None, help="Acceleration error limit in m/s^2"),
+    sideslip_warning: float = typer.Option(None, help="Sideslip (swim) angle warning limit in rad"),
+    sideslip_error: float = typer.Option(None, help="Sideslip (swim) angle error limit in rad"),
+    work_dir: Path = typer.Option(None, help="Directory for intermediate files (default ./results/tmp)")):
     """
     Check a single scenario and optionally output PDF/CSV reports.
     Args:
         file_path: Path to the scenario file.
         out_path: Output directory for reports.
         schema_path: Path to schema files.
+        esmini_path: Path to the esmini executable.
         out_pdf: Whether to create a PDF report.
         out_csv: Whether to create a CSV report.
         print_log: Whether to emit log output.
+        acceleration_warning: Acceleration warning limit, defaults to Config.
+        acceleration_error: Acceleration error limit, defaults to Config.
+        sideslip_warning: Sideslip angle warning limit, defaults to Config.
+        sideslip_error: Sideslip angle error limit, defaults to Config.
+        work_dir: Directory for intermediate files.
     return: FileQualityChecker instance.
     """
+    thresholds = Thresholds.from_mapping({
+        'acceleration_warning': acceleration_warning,
+        'acceleration_error': acceleration_error,
+        'sideslip_warning': sideslip_warning,
+        'sideslip_error': sideslip_error,
+    })
 
     # Run analysis for one file.
-    fqc = FileQualityChecker(file_path, schema_path, esmini_path, print_log)
+    fqc = FileQualityChecker(file_path, schema_path, esmini_path, print_log, thresholds, work_dir)
 
     # Create report (pdf and/or csv).
     if out_pdf:
@@ -1314,7 +1395,11 @@ def quality_check_multiple(
     out_pdf: bool = typer.Option(False),
     out_csv: bool = typer.Option(False),
     print_log: bool = typer.Option(False),
-):
+    acceleration_warning: float = typer.Option(None, help="Acceleration warning limit in m/s^2"),
+    acceleration_error: float = typer.Option(None, help="Acceleration error limit in m/s^2"),
+    sideslip_warning: float = typer.Option(None, help="Sideslip (swim) angle warning limit in rad"),
+    sideslip_error: float = typer.Option(None, help="Sideslip (swim) angle error limit in rad"),
+    work_dir: Path = typer.Option(None, help="Directory for intermediate files (default ./results/tmp)")):
     """
     Check multiple scenarios and optionally output reports.
     Args:
@@ -1327,8 +1412,14 @@ def quality_check_multiple(
         out_pdf: Whether to create a PDF report.
         out_csv: Whether to create a CSV report.
         print_log: Whether to emit log output.
+        acceleration_warning: Acceleration warning limit, defaults to Config.
+        acceleration_error: Acceleration error limit, defaults to Config.
+        sideslip_warning: Sideslip angle warning limit, defaults to Config.
+        sideslip_error: Sideslip angle error limit, defaults to Config.
+        work_dir: Directory for intermediate files.
     return: Aggregated summary list or -1 on invalid input.
     """
+    threshold_options = (acceleration_warning, acceleration_error, sideslip_warning, sideslip_error)
     if print_log:
         logger.info(f"Starting analysis of all .xosc files in {files_path}")
 
@@ -1339,27 +1430,15 @@ def quality_check_multiple(
 
     # Collect per-file checkers when aggregation is requested.
     aggregated_checkers = [] if aggregated else None
-    for file in files_path.glob("*.xosc"):
+    for file in files_path.glob('*.xosc'):
+        single_out_path = out_path / Path('single_reports/')
         if single:
-            Path(out_path / Path("single_reports/")).mkdir(parents=True, exist_ok=True)
-            checker = quality_check_single(
-                file,
-                out_path / Path("single_reports/"),
-                schema_path,
-                esmini_path,
-                out_pdf,
-                out_csv,
-            )
+            single_out_path.mkdir(parents=True, exist_ok=True)
+            checker = quality_check_single(file, single_out_path, schema_path, esmini_path,
+                                           out_pdf, out_csv, False, *threshold_options, work_dir)
         else:
-            checker = quality_check_single(
-                file,
-                out_path / Path("single_reports/"),
-                schema_path,
-                esmini_path,
-                False,
-                False,
-                False,
-            )
+            checker = quality_check_single(file, single_out_path, schema_path, esmini_path,
+                                           False, False, False, *threshold_options, work_dir)
 
         if aggregated:
             aggregated_checkers.append(checker)
@@ -1374,22 +1453,7 @@ def quality_check_multiple(
         if out_pdf:
             create_report_multiple(title, information_summary, out_path, print_log)
         if out_csv:
-            # Prepend a header row for CSV export.
-            information_summary.insert(
-                0,
-                [
-                    "scenario_file",
-                    "xml_loadable",
-                    "xsd_valid",
-                    "simulation_status",
-                    "n_file_errors",
-                    "n_dynamic_errors",
-                ],
-            )
-            csv_file = out_path / Path("aggregate_data.csv")
-            with open(csv_file, mode="w", newline="") as file:
-                writer = csv.writer(file)
-                writer.writerows(information_summary)
+            csv_file = write_aggregate_csv(information_summary, out_path)
             if print_log:
                 logger.info(f"CSV report created at {csv_file}")
         if print_log:

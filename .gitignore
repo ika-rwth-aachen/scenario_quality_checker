@@ -137,3 +137,6 @@ Thumbs.db
 output/
 *.pdf
 reports/
+
+# Working directory of the checker
+results/

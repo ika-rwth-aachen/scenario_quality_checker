@@ -1,0 +1,384 @@
+/* Palette shared with scenario.generator, so both tools read as one family. */
+:root {
+  --ink: #13283f;
+  --muted: #617386;
+  --line: #d9e5ee;
+  --paper: #f4f8fb;
+  --panel: #ffffff;
+  --accent: #fea801;
+  --forest: #8bb8d8;
+  --navy: #28627d;
+  --error: #9a261d;
+  --warning: #8a6716;
+}
+* {
+  box-sizing: border-box;
+}
+[hidden] {
+  display: none !important;
+}
+input[type="checkbox"] {
+  accent-color: var(--navy);
+}
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 13px;
+}
+
+/* Header with the tool identity, the two modes and the status line. */
+header {
+  height: 62px;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 0 22px;
+  border-bottom: 1px solid var(--line);
+  background: #dcecf5;
+}
+.brand {
+  font: 700 17px Helvetica, Arial, sans-serif;
+}
+.tabs {
+  display: flex;
+  gap: 6px;
+}
+button.tab {
+  background: transparent;
+  color: var(--navy);
+  padding: 8px 12px;
+}
+button.tab.active {
+  background: var(--panel);
+  color: var(--ink);
+}
+.status {
+  margin-left: auto;
+  color: var(--muted);
+}
+.status.loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.status.loading::before {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #2f829f55;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  content: "";
+  animation: status-loading-spin 0.8s linear infinite;
+}
+@keyframes status-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Two-column shell: the form on the left, results on the right. */
+main {
+  display: grid;
+  grid-template-columns: 330px minmax(420px, 1fr);
+  gap: 12px;
+  padding: 12px;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  main {
+    grid-template-columns: 1fr;
+  }
+}
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--panel);
+  box-shadow: 0 2px 8px #1730220a;
+  padding: 12px;
+}
+.result-panel {
+  min-height: 60vh;
+}
+.panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-weight: 700;
+}
+.result-actions {
+  display: flex;
+  gap: 12px;
+  font-weight: 400;
+}
+.filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+}
+
+/* Form controls. */
+.field {
+  display: block;
+  margin-bottom: 14px;
+}
+.field > span,
+.field > label {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+.field small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+/* A file input next to its Remove button. */
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.file-row input[type="file"] {
+  flex: 1;
+  min-width: 0;
+}
+button.remove {
+  flex: none;
+  background: transparent;
+  color: var(--navy);
+  padding: 6px 8px;
+  text-decoration: underline;
+}
+button.remove:hover {
+  background: #e8f1f5;
+}
+.field.inline {
+  display: grid;
+  grid-template-columns: 1fr 88px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.field.inline > span {
+  margin-bottom: 0;
+  font-weight: 400;
+}
+input[type="file"],
+input[type="number"],
+select {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 7px;
+  font: inherit;
+}
+/* The example dropdown is disabled while an uploaded file takes precedence.
+   The browser default is too faint against our own input background. */
+select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.field:has(select:disabled) > label {
+  color: var(--muted);
+}
+.thresholds {
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+}
+.thresholds summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.thresholds > .field {
+  margin-top: 10px;
+}
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: var(--forest);
+  color: #012a7a;
+  padding: 10px 12px;
+  cursor: pointer;
+  line-height: 1.2;
+  font: 600 12px Helvetica, Arial, sans-serif;
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+button.secondary {
+  background: transparent;
+  color: var(--navy);
+  padding: 8px 0;
+}
+#submit {
+  width: 100%;
+  background: var(--navy);
+  color: #ffffff;
+  padding: 12px;
+}
+.error {
+  margin: 12px 0 0;
+  border-radius: 8px;
+  background: #f7e7e5;
+  color: var(--error);
+  padding: 10px;
+}
+.placeholder {
+  color: var(--muted);
+}
+
+/* Result: status badges, metadata, findings, plots. */
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.badge {
+  border-radius: 999px;
+  background: #e8f1f5;
+  padding: 5px 11px;
+  font-weight: 600;
+}
+.badge.ok {
+  background: #e2efe4;
+  color: #1f5b2c;
+}
+.badge.bad {
+  background: #f7e7e5;
+  color: var(--error);
+}
+.badge.warn {
+  background: #f8f0dc;
+  color: var(--warning);
+}
+.meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  margin-bottom: 16px;
+  color: var(--muted);
+}
+.meta dt {
+  font-weight: 600;
+}
+.meta dd {
+  margin: 0;
+}
+.note {
+  margin: 0 0 16px;
+  border-left: 3px solid var(--accent);
+  background: #fdf6e6;
+  padding: 9px 11px;
+}
+h3 {
+  margin: 18px 0 8px;
+  font-size: 13px;
+}
+.findings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.finding {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 6px;
+  border-left: 3px solid var(--line);
+  padding: 8px 10px;
+  background: var(--paper);
+  border-radius: 0 8px 8px 0;
+}
+.finding.error {
+  border-left-color: var(--error);
+}
+.finding.warning {
+  border-left-color: var(--warning);
+}
+.finding-message {
+  overflow-wrap: anywhere;
+}
+.finding.error .finding-message {
+  color: var(--error);
+}
+.finding.warning .finding-message {
+  color: var(--warning);
+}
+.finding-detail {
+  color: var(--muted);
+  font-size: 12px;
+}
+.plots {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+.plot figure {
+  margin: 0;
+}
+.plot img {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.plot figcaption {
+  margin-top: 4px;
+  color: var(--muted);
+}
+.downloads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+/* Batch table. */
+.table-scroll {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th,
+td {
+  border-bottom: 1px solid var(--line);
+  padding: 7px 9px;
+  text-align: left;
+  white-space: nowrap;
+}
+th {
+  color: var(--muted);
+  font-size: 12px;
+}
+tbody tr {
+  cursor: pointer;
+}
+tbody tr:hover {
+  background: #e8f1f5;
+}
+td.count-error {
+  color: var(--error);
+  font-weight: 600;
+}
+td.count-warning {
+  color: var(--warning);
+  font-weight: 600;
+}
+.back-link {
+  margin-bottom: 12px;
+}
