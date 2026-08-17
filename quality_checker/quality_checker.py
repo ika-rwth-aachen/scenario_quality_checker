@@ -1,28 +1,23 @@
-
-from collections import Counter
-import collections
 import csv
 import io
-from datetime import datetime
-from loguru import logger
-import numpy as np
 import os
-import collections
-import pandas as pd
-from pathlib import Path
-import tempfile
-import subprocess
-import shlex
 import shutil
-from scenariogeneration import xosc
+import subprocess
+import xml.etree.ElementTree as ET
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+from xml.sax import make_parser
+from xml.sax.handler import ContentHandler
+
+import numpy as np
+import pandas as pd
 import scipy as sp
 import shapely
 import typer
-
-from xml.sax.handler import ContentHandler
-from xml.sax import make_parser
-import xml.etree.ElementTree as ET
 import xmlschema
+from loguru import logger
+from scenariogeneration import xosc
 
 from .config import Config
 from .pdf import *
@@ -61,25 +56,25 @@ class FileQualityChecker:
         self.position_resolution_warnings = []
         self.dynamic_errors = None
         self.dynamic_data = None
-        self.simulation_status = 'not done'
+        self.simulation_status = "not done"
         self._xodr_resolver = OpenDrivePositionResolver()
 
         if self.print_log:
-            logger.info(f'Starting analysis of {self.file_path}')
+            logger.info(f"Starting analysis of {self.file_path}")
 
         # Parse XML early to avoid downstream schema/scenario errors.
         self.xml_loadable = self.is_xml_loadable()
         if not self.xml_loadable:
             return
         elif self.print_log == True:
-            logger.info('XML is loadable')
+            logger.info("XML is loadable")
 
         # Validate against the matching OpenSCENARIO XSD.
         self.xsd_valid, self.version = self.is_xsd_valid(schema_path)
         if not self.xsd_valid:
             return
         elif print_log == True:
-            logger.info('XSD is valid')
+            logger.info("XSD is valid")
 
         # Parse with scenariogeneration to access scenario structure.
         self.scenario = self.load_openscenario()
@@ -88,13 +83,13 @@ class FileQualityChecker:
             return
 
         # Metadata is read from the parsed scenario header.
-        self.author = self.scenario.header.get_attributes()['author']
+        self.author = self.scenario.header.get_attributes()["author"]
         self.date = self.get_date()
 
         # File-level checks (entities, init positions, intersections, add/remove).
         entities, self.file_errors = self.check_file_errors()
         self.road_user_counts = Counter(entities.values())
-        self.road_user_counts['total'] = str(len(entities))
+        self.road_user_counts["total"] = str(len(entities))
 
         # Dynamic checks (acceleration and swim angle thresholds).
         self.dynamic_errors = self.check_dynamic_errors()
@@ -108,27 +103,34 @@ class FileQualityChecker:
         """
         # Keep values stable even when earlier stages failed.
         if not self.xml_loadable:
-            return (self.file_path, False, False, self.simulation_status, '-', '-')
+            return (self.file_path, False, False, self.simulation_status, "-", "-")
 
         if not self.xsd_valid:
-            return (self.file_path, True, False, self.simulation_status, '-', '-')
+            return (self.file_path, True, False, self.simulation_status, "-", "-")
 
         if self.scenario is None:
-            return (self.file_path, True, True, self.simulation_status, '-', '-')
+            return (self.file_path, True, True, self.simulation_status, "-", "-")
 
         try:
             file_error_count = sum(len(items) for items in self.file_errors)
         except Exception:
-            file_error_count = '-'
+            file_error_count = "-"
 
         try:
             # Default to empty lists when dynamic errors are missing.
             dynamic_error_groups = self.dynamic_errors or ([], [], [], [])
             dynamic_error_count = sum(len(items) for items in dynamic_error_groups)
         except Exception:
-            dynamic_error_count = '-'
+            dynamic_error_count = "-"
 
-        return (self.file_path, True, True, self.simulation_status, file_error_count, dynamic_error_count)
+        return (
+            self.file_path,
+            True,
+            True,
+            self.simulation_status,
+            file_error_count,
+            dynamic_error_count,
+        )
 
     def is_xml_loadable(self):
         """
@@ -142,7 +144,7 @@ class FileQualityChecker:
         try:
             parser.parse(self.file_path)
             return True
-        except Exception as e:
+        except Exception:
             return False
 
     def is_xsd_valid(self, schema_path):
@@ -155,16 +157,16 @@ class FileQualityChecker:
         tree = ET.parse(self.file_path)
         root = tree.getroot()
 
-        revMajor = root[0].attrib['revMajor']
-        revMinor = root[0].attrib['revMinor']
-        xsd_version = revMajor + '-' + revMinor
+        revMajor = root[0].attrib["revMajor"]
+        revMinor = root[0].attrib["revMinor"]
+        xsd_version = revMajor + "-" + revMinor
 
         # Reset stored errors on each validation run.
         self.xsd_errors = []
 
         # Schema files exist for v1.x only; v2+ is treated as unsupported here.
         if int(revMajor) < 2:
-            file = Path('OpenSCENARIO_' + xsd_version + '.xsd')
+            file = Path("OpenSCENARIO_" + xsd_version + ".xsd")
             schema_file = schema_path / file
         else:
             msg = f"File version {xsd_version} is not supported (no schema for revMajor >= 2)."
@@ -190,7 +192,9 @@ class FileQualityChecker:
                 max_errors = 20
                 for idx, error in enumerate(xsd.iter_errors(self.file_path)):
                     if idx >= max_errors:
-                        more_msg = f"... and more XSD errors (showing first {max_errors})."
+                        more_msg = (
+                            f"... and more XSD errors (showing first {max_errors})."
+                        )
                         self.xsd_errors.append(more_msg)
                         if self.print_log:
                             logger.error(more_msg)
@@ -203,7 +207,9 @@ class FileQualityChecker:
                             f"XSD validation error in {self.file_path} (version {xsd_version}): {err_msg}"
                         )
             except Exception as e:
-                fallback_msg = f"Failed to collect XSD validation errors for {self.file_path}: {e}"
+                fallback_msg = (
+                    f"Failed to collect XSD validation errors for {self.file_path}: {e}"
+                )
                 self.xsd_errors.append(fallback_msg)
                 if self.print_log:
                     logger.error(fallback_msg)
@@ -236,7 +242,7 @@ class FileQualityChecker:
         """
         parameters = self._load_parameter_declarations_outside_storyboard()
 
-        with open(self.file_path, 'r', encoding='utf-8') as file:
+        with open(self.file_path, "r", encoding="utf-8") as file:
             content = file.read()
 
         updated_content = self._replace_parameters_in_content(content, parameters)
@@ -251,7 +257,7 @@ class FileQualityChecker:
         with open(temp_path, mode="w", encoding="utf-8") as temp:
             temp.write(updated_content)
         return temp_path
-    
+
     def get_date(self):
         """
         Extract scenario date from the file header (if present).
@@ -262,13 +268,13 @@ class FileQualityChecker:
         tree = ET.parse(self.file_path)
         root = tree.getroot()
         header = root.find("FileHeader")
-        if header is not None and 'date' in header.attrib:
-            date = header.attrib['date']
+        if header is not None and "date" in header.attrib:
+            date = header.attrib["date"]
             date = datetime.fromisoformat(date)
             return date.strftime("%d.%m.%Y")
         else:
             return None
-    
+
     def check_file_errors(self):
         """
         Check for entity definition, init, and intersection issues.
@@ -280,7 +286,9 @@ class FileQualityChecker:
         entity_names = list(entities.keys())
         missing_entity_definitions = self._check_actors_defined(entity_names)
 
-        init_positions, parked_entities, unresolved_no_xodr, unresolved_conversion = self._get_initial_positions(entity_names)
+        init_positions, parked_entities, unresolved_no_xodr, unresolved_conversion = (
+            self._get_initial_positions(entity_names)
+        )
 
         self.position_resolution_warnings = []
         if len(unresolved_no_xodr) > 0:
@@ -294,15 +302,24 @@ class FileQualityChecker:
                 + ", ".join(sorted(unresolved_conversion))
             )
 
-        identical_initposition_entities = self._get_identical_initposition_entities(init_positions)
+        identical_initposition_entities = self._get_identical_initposition_entities(
+            init_positions
+        )
         intersecting_entities = self._get_intersecting_entities(init_positions)
 
         added_entities, removed_entities = self._get_added_and_removed_entities()
-        missing_in = self._check_in_out_entities(init_positions, parked_entities, added_entities, removed_entities)
-        
-        return entities, (missing_entity_definitions, identical_initposition_entities, intersecting_entities, missing_in )
-    
-    def check_dynamic_errors(self):   
+        missing_in = self._check_in_out_entities(
+            init_positions, parked_entities, added_entities, removed_entities
+        )
+
+        return entities, (
+            missing_entity_definitions,
+            identical_initposition_entities,
+            intersecting_entities,
+            missing_in,
+        )
+
+    def check_dynamic_errors(self):
         """
         Check for acceleration and swim angle threshold violations.
         Args:
@@ -316,21 +333,30 @@ class FileQualityChecker:
 
         dynamic_data = self._get_dynamic_data()
         if len(dynamic_data) == 0:
-            return (acceleration_errors, acceleration_warnings, swimangle_errors, swimangle_warnings)
+            return (
+                acceleration_errors,
+                acceleration_warnings,
+                swimangle_errors,
+                swimangle_warnings,
+            )
 
         for entity_name in dynamic_data.keys():
             positions, times = dynamic_data[entity_name]
 
             if len(times) == 0 or any(t is None for t in times):
                 continue
-            
+
             df = self._build_dynamic_data_df(positions, times)
             df = self._calculate_acceleration_swimangle(df)
 
-            if 'ego' in entity_name:
-                if np.any(np.abs(df.acceleration) > Config.ACCELERATION_ERROR_THRESHOLD):
+            if "ego" in entity_name:
+                if np.any(
+                    np.abs(df.acceleration) > Config.ACCELERATION_ERROR_THRESHOLD
+                ):
                     acceleration_errors.append(entity_name)
-                elif np.any(np.abs(df.acceleration) > Config.ACCELERATION_WARNING_THRESHOLD):
+                elif np.any(
+                    np.abs(df.acceleration) > Config.ACCELERATION_WARNING_THRESHOLD
+                ):
                     acceleration_warnings.append(entity_name)
 
                 if np.any(np.abs(df.swimangle) > Config.SWIMANGLE_ERROR_THRESHOLD):
@@ -338,20 +364,26 @@ class FileQualityChecker:
                 elif np.any(np.abs(df.swimangle) > Config.SWIMANGLE_WARNING_THRESHOLD):
                     swimangle_warnings.append(entity_name)
             else:
-                if np.any(np.abs(df.acceleration) > Config.ACCELERATION_ERROR_THRESHOLD):
+                if np.any(
+                    np.abs(df.acceleration) > Config.ACCELERATION_ERROR_THRESHOLD
+                ):
                     acceleration_errors.append(entity_name)
-                elif np.any(np.abs(df.acceleration) > Config.ACCELERATION_WARNING_THRESHOLD):
+                elif np.any(
+                    np.abs(df.acceleration) > Config.ACCELERATION_WARNING_THRESHOLD
+                ):
                     acceleration_warnings.append(entity_name)
                 if np.any(np.abs(df.swimangle) > Config.SWIMANGLE_ERROR_THRESHOLD):
                     swimangle_errors.append(entity_name)
                 elif np.any(np.abs(df.swimangle) > Config.SWIMANGLE_WARNING_THRESHOLD):
                     swimangle_warnings.append(entity_name)
-            
+
         return (
-            acceleration_errors, acceleration_warnings, 
-            swimangle_errors, swimangle_warnings
-            )
-    
+            acceleration_errors,
+            acceleration_warnings,
+            swimangle_errors,
+            swimangle_warnings,
+        )
+
     def _get_dynamic_data(self):
         """
         Return positions and times for each actor's trajectory events.
@@ -368,10 +400,10 @@ class FileQualityChecker:
         if self.esmini_path:
             try:
                 self.dynamic_data = self._get_dynamic_data_from_simulation()
-                self.simulation_status = 'succeeded'
+                self.simulation_status = "succeeded"
                 return self.dynamic_data
             except Exception as e:
-                self.simulation_status = 'failed'
+                self.simulation_status = "failed"
                 if self.print_log:
                     logger.warning(
                         f"Simulation-based dynamics extraction failed for {self.file_path}: {e}. "
@@ -380,7 +412,7 @@ class FileQualityChecker:
                 self.dynamic_data = self._get_dynamic_data_from_scenario()
                 return self.dynamic_data
 
-        self.simulation_status = 'not done'
+        self.simulation_status = "not done"
         self.dynamic_data = self._get_dynamic_data_from_scenario()
         return self.dynamic_data
 
@@ -397,20 +429,35 @@ class FileQualityChecker:
                     for maneuver in maneuvergroup.maneuvers:
                         for event in maneuver.events:
                             for action in event.action:
-                                if 'trajectory' in dir(action.action):
+                                if "trajectory" in dir(action.action):
                                     times = action.action.trajectory.shapes.time
-                                    positions = action.action.trajectory.shapes.positions
+                                    positions = (
+                                        action.action.trajectory.shapes.positions
+                                    )
                                     if actor_name in dynamic_data:
-                                        old_positions, old_times = dynamic_data[actor_name]
-                                        dynamic_data[actor_name] = (old_positions + positions, old_times + times)
+                                        old_positions, old_times = dynamic_data[
+                                            actor_name
+                                        ]
+                                        dynamic_data[actor_name] = (
+                                            old_positions + positions,
+                                            old_times + times,
+                                        )
                                     else:
                                         dynamic_data[actor_name] = (positions, times)
-                                elif 'route' in dir(action.action):
-                                    positions = [waypoint.position for waypoint in action.action.route.waypoints]
+                                elif "route" in dir(action.action):
+                                    positions = [
+                                        waypoint.position
+                                        for waypoint in action.action.route.waypoints
+                                    ]
                                     times = [None] * len(positions)
                                     if actor_name in dynamic_data:
-                                        old_positions, old_times = dynamic_data[actor_name]
-                                        dynamic_data[actor_name] = (old_positions + positions, old_times + times)
+                                        old_positions, old_times = dynamic_data[
+                                            actor_name
+                                        ]
+                                        dynamic_data[actor_name] = (
+                                            old_positions + positions,
+                                            old_times + times,
+                                        )
                                     else:
                                         dynamic_data[actor_name] = (positions, times)
                                 else:
@@ -629,7 +676,9 @@ class FileQualityChecker:
         entity_slots = []
         for name_col_stripped in headers:
             if "entitity_name" in name_col_stripped.lower():  # note: esmini spelling
-                prefix = name_col_stripped.split("Entitity_Name")[0].strip()  # e.g. "#1"
+                prefix = name_col_stripped.split("Entitity_Name")[
+                    0
+                ].strip()  # e.g. "#1"
 
                 def _find_with_prefix(suffix: str):
                     for h in headers:
@@ -647,7 +696,9 @@ class FileQualityChecker:
                             "name_col": header_map[name_col_stripped],
                             "x_col": header_map[x_col_stripped],
                             "y_col": header_map[y_col_stripped],
-                            "h_col": header_map.get(h_col_stripped) if h_col_stripped else None,
+                            "h_col": header_map.get(h_col_stripped)
+                            if h_col_stripped
+                            else None,
                         }
                     )
 
@@ -692,7 +743,7 @@ class FileQualityChecker:
                     dynamic_data[entity_name] = ([position], [t])
 
         return dynamic_data
-    
+
     def _load_parameter_declarations_outside_storyboard(self):
         """
         Extract parameter declarations, excluding any inside Storyboard.
@@ -704,18 +755,18 @@ class FileQualityChecker:
         root = tree.getroot()
 
         parameters = {}
-        storyboard = root.find('.//Storyboard')
-        all_parameters = root.findall('.//ParameterDeclaration')
+        storyboard = root.find(".//Storyboard")
+        all_parameters = root.findall(".//ParameterDeclaration")
 
         if storyboard is not None:
-            storyboard_parameters = set(storyboard.findall('.//ParameterDeclaration'))
+            storyboard_parameters = set(storyboard.findall(".//ParameterDeclaration"))
         else:
             storyboard_parameters = set()
 
         for param in all_parameters:
             if param not in storyboard_parameters:
-                name = param.get('name')
-                value = param.get('value')
+                name = param.get("name")
+                value = param.get("value")
                 parameters[name] = value
 
         return parameters
@@ -730,7 +781,7 @@ class FileQualityChecker:
         return: Updated content string.
         """
         for name, value in parameters.items():
-            placeholder = f'${name}'
+            placeholder = f"${name}"
             content = content.replace(placeholder, value)
         return content
 
@@ -746,13 +797,21 @@ class FileQualityChecker:
         for story in self.scenario.storyboard.stories:
             for act in story.acts:
                 for maneuvergroup in act.maneuvergroup:
-                    actors = {actor.entity for actor in maneuvergroup.actors.actors if '$' not in actor.entity}
+                    actors = {
+                        actor.entity
+                        for actor in maneuvergroup.actors.actors
+                        if "$" not in actor.entity
+                    }
 
                     if len(actors.intersection(set(entity_names))) != len(actors):
-                        missing_entity_definition = list(set(actors) - set(entity_names))
+                        missing_entity_definition = list(
+                            set(actors) - set(entity_names)
+                        )
                         missing_entity_definitions.append(missing_entity_definition)
 
-        missing_entity_definitions = [x for xs in missing_entity_definitions for x in xs]
+        missing_entity_definitions = [
+            x for xs in missing_entity_definitions for x in xs
+        ]
 
         for entity in entity_names:
             try:
@@ -761,7 +820,9 @@ class FileQualityChecker:
                 continue
 
             for initaction in initactions:
-                if 'AbsoluteSpeedAction' in str(type(initaction)) and not isinstance(initaction.speed, float):
+                if "AbsoluteSpeedAction" in str(type(initaction)) and not isinstance(
+                    initaction.speed, float
+                ):
                     missing_entity_definitions.append(entity)
 
         return list(set(missing_entity_definitions))
@@ -778,10 +839,15 @@ class FileQualityChecker:
 
         try:
             for scenario_object in self.scenario.entities.scenario_objects:
-                entities[scenario_object.name] = scenario_object.entityobject.vehicle_type.name
+                entities[scenario_object.name] = (
+                    scenario_object.entityobject.vehicle_type.name
+                )
             return entities
         except AttributeError:
-            entity_list = [scenario_object.name for scenario_object in self.scenario.entities.scenario_objects]
+            entity_list = [
+                scenario_object.name
+                for scenario_object in self.scenario.entities.scenario_objects
+            ]
             return dict.fromkeys(entity_list)
 
     def _get_initial_positions(self, entity_names):
@@ -807,27 +873,37 @@ class FileQualityChecker:
                 continue
 
             for initaction in initactions:
-                if 'TeleportAction' in str(type(initaction)):
-                    if 'WorldPosition' in str(type(initaction.position)):
-                        init_positions[entity] = (initaction.position.x, initaction.position.y)
-                    elif 'LanePosition' in str(type(initaction.position)):
+                if "TeleportAction" in str(type(initaction)):
+                    if "WorldPosition" in str(type(initaction.position)):
+                        init_positions[entity] = (
+                            initaction.position.x,
+                            initaction.position.y,
+                        )
+                    elif "LanePosition" in str(type(initaction.position)):
                         if has_valid_xodr:
-                            world_position = self._resolve_lane_position_to_world(initaction.position)
+                            world_position = self._resolve_lane_position_to_world(
+                                initaction.position
+                            )
                             if world_position is not None:
                                 init_positions[entity] = world_position
                             else:
-                                init_positions[entity] = ('-', '-')
+                                init_positions[entity] = ("-", "-")
                                 unresolved_conversion.append(entity)
                         else:
-                            init_positions[entity] = ('-', '-')
+                            init_positions[entity] = ("-", "-")
                             unresolved_no_xodr.append(entity)
                     else:
-                        init_positions[entity] = ('-', '-')
-                elif 'AbsoluteSpeedAction' in str(type(initaction)):
+                        init_positions[entity] = ("-", "-")
+                elif "AbsoluteSpeedAction" in str(type(initaction)):
                     if isinstance(initaction.speed, float) and initaction.speed < 1e-6:
                         parked_entities.append(entity)
 
-        return init_positions, parked_entities, list(set(unresolved_no_xodr)), list(set(unresolved_conversion))
+        return (
+            init_positions,
+            parked_entities,
+            list(set(unresolved_no_xodr)),
+            list(set(unresolved_conversion)),
+        )
 
     @staticmethod
     def _is_numeric_position(position_value):
@@ -840,7 +916,9 @@ class FileQualityChecker:
         xodr_path = self.get_xodr_path()
         if xodr_path is None:
             return None
-        return self._xodr_resolver.resolve_lane_position_to_world(xodr_path, lane_position)
+        return self._xodr_resolver.resolve_lane_position_to_world(
+            xodr_path, lane_position
+        )
 
     @staticmethod
     def _get_identical_initposition_entities(init_positions):
@@ -853,13 +931,19 @@ class FileQualityChecker:
         # Detect duplicate positions by counting identical tuples.
         identical_position_entities = []
 
-        valid_positions = {k: v for k, v in init_positions.items() if FileQualityChecker._is_numeric_position(v)}
+        valid_positions = {
+            k: v
+            for k, v in init_positions.items()
+            if FileQualityChecker._is_numeric_position(v)
+        }
 
         if len(set(valid_positions.values())) != len(valid_positions.values()):
             Counter(valid_positions.values()).items()
             duplicates = [
                 (i, item, count)
-                for i, (item, count) in enumerate(Counter(valid_positions.values()).items())
+                for i, (item, count) in enumerate(
+                    Counter(valid_positions.values()).items()
+                )
                 if count > 1
             ]
 
@@ -867,7 +951,11 @@ class FileQualityChecker:
                 idxs = [idx]
                 current_idx = idx
                 for _ in range(count - 1):
-                    idx_new = current_idx + list(valid_positions.values())[current_idx + 1 :].index(item) + 1
+                    idx_new = (
+                        current_idx
+                        + list(valid_positions.values())[current_idx + 1 :].index(item)
+                        + 1
+                    )
                     idxs.append(idx_new)
                     current_idx = idx_new
 
@@ -887,27 +975,39 @@ class FileQualityChecker:
         # Optional radius-based prefilter to reduce pairwise polygon checks.
         intersecting_entites = []
 
-        valid_init_positions = {k: v for k, v in init_positions.items() if self._is_numeric_position(v)}
+        valid_init_positions = {
+            k: v for k, v in init_positions.items() if self._is_numeric_position(v)
+        }
 
         polygons, max_entity_radius = self._get_entities_bbox(valid_init_positions)
         if len(polygons) > 1:
             if filter_by_radius:
                 distances = sp.spatial.distance.cdist(
                     np.array(list(valid_init_positions.values())),
-                    np.array(list(valid_init_positions.values()))
+                    np.array(list(valid_init_positions.values())),
                 )
                 distances = np.triu(distances)
 
                 possible_intersection_indices = np.where(
                     np.logical_and(distances < 2 * max_entity_radius, distances > 1e-6)
                 )
-                valid = possible_intersection_indices[0] != possible_intersection_indices[1]
-                possible_intersection_indices_a = possible_intersection_indices[0][valid]
-                possible_intersection_indices_b = possible_intersection_indices[1][valid]
+                valid = (
+                    possible_intersection_indices[0] != possible_intersection_indices[1]
+                )
+                possible_intersection_indices_a = possible_intersection_indices[0][
+                    valid
+                ]
+                possible_intersection_indices_b = possible_intersection_indices[1][
+                    valid
+                ]
             else:
-                possible_intersection_indices_a, possible_intersection_indices_b = list(range(len(polygons)))
+                possible_intersection_indices_a, possible_intersection_indices_b = list(
+                    range(len(polygons))
+                )
 
-            for index_a, index_b in zip(possible_intersection_indices_a, possible_intersection_indices_b):
+            for index_a, index_b in zip(
+                possible_intersection_indices_a, possible_intersection_indices_b
+            ):
                 intersection = polygons[index_a].intersection(polygons[index_b])
                 if not intersection.is_empty:
                     entity_a = list(valid_init_positions.keys())[index_a]
@@ -930,7 +1030,9 @@ class FileQualityChecker:
         for scenario_object in self.scenario.entities.scenario_objects:
             if scenario_object.name in init_positions.keys():
                 init_position = init_positions[scenario_object.name]
-                if self._is_numeric_position(init_position) and hasattr(scenario_object.entityobject, 'boundingbox'):
+                if self._is_numeric_position(init_position) and hasattr(
+                    scenario_object.entityobject, "boundingbox"
+                ):
                     length = scenario_object.entityobject.boundingbox.boundingbox.length
                     width = scenario_object.entityobject.boundingbox.boundingbox.width
 
@@ -944,8 +1046,7 @@ class FileQualityChecker:
                     polygons.append(polygon)
 
                     radius = shapely.minimum_bounding_radius(polygon)
-                    if radius > max_entity_radius:
-                        max_entity_radius = radius
+                    max_entity_radius = max(max_entity_radius, radius)
 
         return polygons, max_entity_radius
 
@@ -972,22 +1073,26 @@ class FileQualityChecker:
                     for maneuver in maneuvergroup.maneuvers:
                         for event in maneuver.events:
                             for actor in actors:
-                                if '$' in actor:
+                                if "$" in actor:
                                     continue
-                                if 'Add_' in event.name:
+                                if "Add_" in event.name:
                                     added_entities.append(actor)
-                                elif 'Remove_' in event.name:
+                                elif "Remove_" in event.name:
                                     removed_entities.append(actor)
 
         if len(set(added_entities)) != len(added_entities):
             logger.warning("Duplicate Add_ events detected for one or more entities.")
         if len(set(removed_entities)) != len(removed_entities):
-            logger.warning("Duplicate Remove_ events detected for one or more entities.")
+            logger.warning(
+                "Duplicate Remove_ events detected for one or more entities."
+            )
 
         return list(set(added_entities)), list(set(removed_entities))
 
     @staticmethod
-    def _check_in_out_entities(init_positions, parked_entities, added_entities, removed_entities):
+    def _check_in_out_entities(
+        init_positions, parked_entities, added_entities, removed_entities
+    ):
         """
         Check if initialized + added equals removed + parked.
         Args:
@@ -1001,12 +1106,22 @@ class FileQualityChecker:
         if set(added_entities).intersection(set(list(init_positions.keys()))):
             logger.warning("Entities appear both in init positions and Add_ events.")
         if set(removed_entities).intersection(set(parked_entities)):
-            logger.warning("Entities appear both in Remove_ events and parked entities.")
+            logger.warning(
+                "Entities appear both in Remove_ events and parked entities."
+            )
 
         missing_in = []
 
-        if len(added_entities) + len(init_positions) - len(removed_entities) - len(parked_entities) != 0:
-            all_entities = added_entities + list(init_positions.keys()) + removed_entities
+        if (
+            len(added_entities)
+            + len(init_positions)
+            - len(removed_entities)
+            - len(parked_entities)
+            != 0
+        ):
+            all_entities = (
+                added_entities + list(init_positions.keys()) + removed_entities
+            )
             in_entities = added_entities + list(init_positions.keys())
 
             missing_in = list(set(all_entities) - set(in_entities))
@@ -1031,10 +1146,10 @@ class FileQualityChecker:
             ys.append(position.y)
             hs.append(position.h)
 
-        df = pd.DataFrame(times, columns=['time'])
-        df['x'] = xs
-        df['y'] = ys
-        df['h'] = hs
+        df = pd.DataFrame(times, columns=["time"])
+        df["x"] = xs
+        df["y"] = ys
+        df["h"] = hs
 
         return df
 
@@ -1049,25 +1164,25 @@ class FileQualityChecker:
         return: DataFrame with added speed, acceleration, and swimangle columns.
         """
         # Derived values are finite differences across the trajectory.
-        dt = df['time'].diff().rolling(window=rolling_window, center=True).mean()
-        dx = df['x'].diff().rolling(window=rolling_window, center=True).mean()
-        dy = df['y'].diff().rolling(window=rolling_window, center=True).mean()
-        
-        df['speed'] = (np.sqrt(dx**2 + dy**2) / dt )
-        df['acceleration'] = df['speed'].diff() / dt
-        
-        df['movement_angle'] = np.arctan2(dy, dx)
-        df['movement_angle'] = df['movement_angle'].bfill()
-        
-        mask = (df.speed > threshold)
-        
-        df['filtered_movement_angle'] = df['movement_angle'].where(mask).ffill().bfill()
-        df['swimangle'] = df['h'].fillna(0) - df['filtered_movement_angle']
-        
-        df['swimangle'] = ((df['swimangle'] + np.pi) % (2 * np.pi)) - np.pi
-        
+        dt = df["time"].diff().rolling(window=rolling_window, center=True).mean()
+        dx = df["x"].diff().rolling(window=rolling_window, center=True).mean()
+        dy = df["y"].diff().rolling(window=rolling_window, center=True).mean()
+
+        df["speed"] = np.sqrt(dx**2 + dy**2) / dt
+        df["acceleration"] = df["speed"].diff() / dt
+
+        df["movement_angle"] = np.arctan2(dy, dx)
+        df["movement_angle"] = df["movement_angle"].bfill()
+
+        mask = df.speed > threshold
+
+        df["filtered_movement_angle"] = df["movement_angle"].where(mask).ffill().bfill()
+        df["swimangle"] = df["h"].fillna(0) - df["filtered_movement_angle"]
+
+        df["swimangle"] = ((df["swimangle"] + np.pi) % (2 * np.pi)) - np.pi
+
         return df
-    
+
     def create_single_report(self, title, out_path):
         """
         Generate a PDF report for the current scenario.
@@ -1077,7 +1192,7 @@ class FileQualityChecker:
         """
         create_report_single(self, title, out_path)
         if self.print_log:
-            logger.info(f'Report created: {out_path}')
+            logger.info(f"Report created: {out_path}")
 
     def create_csv(self, name, out_path):
         """
@@ -1086,67 +1201,77 @@ class FileQualityChecker:
             name: Base filename for the CSV.
             out_path: Output directory for the CSV.
         """
-        csv_file = out_path / Path(name + '.csv')
+        csv_file = out_path / Path(name + ".csv")
         with open(csv_file, mode="w", newline="") as file:
             writer = csv.writer(file)
-            writer.writerow(['scenario_file', self.file_path])
-            writer.writerow(['xml_loadable', self.xml_loadable])
-            writer.writerow(['xsd_valid', self.xsd_valid])
-            writer.writerow(['version', self.version.replace('-', '.') if self.version else self.version])
-            writer.writerow(['author', self.author])
-            writer.writerow(['date', self.date])
-            writer.writerow(['simulation_status', self.simulation_status])
+            writer.writerow(["scenario_file", self.file_path])
+            writer.writerow(["xml_loadable", self.xml_loadable])
+            writer.writerow(["xsd_valid", self.xsd_valid])
+            writer.writerow(
+                [
+                    "version",
+                    self.version.replace("-", ".") if self.version else self.version,
+                ]
+            )
+            writer.writerow(["author", self.author])
+            writer.writerow(["date", self.date])
+            writer.writerow(["simulation_status", self.simulation_status])
             for road_user, count in self.road_user_counts.items():
                 writer.writerow([road_user, count])
-            
+
             writer.writerow([])
-            writer.writerow(['file_errors'])
-            writer.writerow(['missing_entity_definitions'])
+            writer.writerow(["file_errors"])
+            writer.writerow(["missing_entity_definitions"])
             for missing_entity_definition in self.file_errors[0]:
                 writer.writerow([missing_entity_definition])
-            writer.writerow(['identical_initposition_entities'])
+            writer.writerow(["identical_initposition_entities"])
             for identical_initposition_entity in self.file_errors[1]:
                 writer.writerow([identical_initposition_entity])
-            writer.writerow(['intersecting_entities'])
+            writer.writerow(["intersecting_entities"])
             for intersecting_entity in self.file_errors[2]:
                 writer.writerow([intersecting_entity])
-            writer.writerow(['missing_in'])
+            writer.writerow(["missing_in"])
             for missing_in in self.file_errors[3]:
                 writer.writerow([missing_in])
 
-            writer.writerow(['position_resolution_warnings'])
+            writer.writerow(["position_resolution_warnings"])
             for warning in self.position_resolution_warnings:
                 writer.writerow([warning])
-            
+
             writer.writerow([])
-            writer.writerow(['dynamic_errors'])
-            writer.writerow(['acceleration_errors'])
+            writer.writerow(["dynamic_errors"])
+            writer.writerow(["acceleration_errors"])
             for acceleration_error in (self.dynamic_errors or ([], [], [], []))[0]:
                 writer.writerow([acceleration_error])
-            writer.writerow(['acceleration_warnings'])
+            writer.writerow(["acceleration_warnings"])
             for acceleration_warning in (self.dynamic_errors or ([], [], [], []))[1]:
                 writer.writerow([acceleration_warning])
-            writer.writerow(['swimangle_errors'])
+            writer.writerow(["swimangle_errors"])
             for swimangle_error in (self.dynamic_errors or ([], [], [], []))[2]:
                 writer.writerow([swimangle_error])
-            writer.writerow(['swimangle_warnings'])
+            writer.writerow(["swimangle_warnings"])
             for swimangle_warning in (self.dynamic_errors or ([], [], [], []))[3]:
                 writer.writerow([swimangle_warning])
-                
+
         if self.print_log:
-            logger.info(f'CSV report created at {csv_file}')
-        return
+            logger.info(f"CSV report created at {csv_file}")
 
 
 @app.command("quality_check_single")
 def quality_check_single(
     file_path: Path = typer.Option(...),
     out_path: Path = typer.Option(Path("reports/single_reports/")),
-    schema_path: Path = typer.Option(DEFAULT_SCHEMA_PATH, help="Path to the schema files"),
-    esmini_path: Path = typer.Option(None, help="Path to the esmini executable. If given, simulation is used to assess dynamics"),
+    schema_path: Path = typer.Option(
+        DEFAULT_SCHEMA_PATH, help="Path to the schema files"
+    ),
+    esmini_path: Path = typer.Option(
+        None,
+        help="Path to the esmini executable. If given, simulation is used to assess dynamics",
+    ),
     out_pdf: bool = typer.Option(False),
     out_csv: bool = typer.Option(False),
-    print_log: bool = typer.Option(False)): 
+    print_log: bool = typer.Option(False),
+):
     """
     Check a single scenario and optionally output PDF/CSV reports.
     Args:
@@ -1158,32 +1283,38 @@ def quality_check_single(
         print_log: Whether to emit log output.
     return: FileQualityChecker instance.
     """
-    
+
     # Run analysis for one file.
     fqc = FileQualityChecker(file_path, schema_path, esmini_path, print_log)
-    
+
     # Create report (pdf and/or csv).
     if out_pdf:
-        report_title = 'Summary of ' + fqc.file_path.name
+        report_title = "Summary of " + fqc.file_path.name
         fqc.create_single_report(report_title, out_path)
     if out_csv:
         fqc.create_csv(fqc.file_path.name, out_path)
     if print_log:
-        logger.info(f"Analysis completed for {str(file_path)}.")
+        logger.info(f"Analysis completed for {file_path!s}.")
     return fqc
-    
-    
+
+
 @app.command("quality_check_multiple")
 def quality_check_multiple(
     files_path: Path = typer.Option(...),
     out_path: Path = typer.Option(Path("reports/")),
-    schema_path: Path = typer.Option(DEFAULT_SCHEMA_PATH, help="Path to the schema files"),
-    esmini_path: Path = typer.Option(None, help="Path to the esmini executable. If given, simulation is used to assess dynamics"),
+    schema_path: Path = typer.Option(
+        DEFAULT_SCHEMA_PATH, help="Path to the schema files"
+    ),
+    esmini_path: Path = typer.Option(
+        None,
+        help="Path to the esmini executable. If given, simulation is used to assess dynamics",
+    ),
     single: bool = typer.Option(False),
     aggregated: bool = typer.Option(False),
     out_pdf: bool = typer.Option(False),
     out_csv: bool = typer.Option(False),
-    print_log: bool = typer.Option(False)): 
+    print_log: bool = typer.Option(False),
+):
     """
     Check multiple scenarios and optionally output reports.
     Args:
@@ -1199,41 +1330,68 @@ def quality_check_multiple(
     return: Aggregated summary list or -1 on invalid input.
     """
     if print_log:
-        logger.info(f'Starting analysis of all .xosc files in {files_path}')
-    
+        logger.info(f"Starting analysis of all .xosc files in {files_path}")
+
     # Ensure we have a directory to scan for .xosc files.
     if not files_path.is_dir():
-        logger.error('Files path is not a directory')
+        logger.error("Files path is not a directory")
         return -1
-        
+
     # Collect per-file checkers when aggregation is requested.
     aggregated_checkers = [] if aggregated else None
-    for file in files_path.glob('*.xosc'):
+    for file in files_path.glob("*.xosc"):
         if single:
-            Path(out_path / Path('single_reports/')).mkdir(parents=True, exist_ok=True)
-            checker = quality_check_single(file, out_path / Path('single_reports/'), schema_path, esmini_path, out_pdf, out_csv)
+            Path(out_path / Path("single_reports/")).mkdir(parents=True, exist_ok=True)
+            checker = quality_check_single(
+                file,
+                out_path / Path("single_reports/"),
+                schema_path,
+                esmini_path,
+                out_pdf,
+                out_csv,
+            )
         else:
-            checker = quality_check_single(file, out_path / Path('single_reports/'), schema_path, esmini_path, False, False, False)
+            checker = quality_check_single(
+                file,
+                out_path / Path("single_reports/"),
+                schema_path,
+                esmini_path,
+                False,
+                False,
+                False,
+            )
 
         if aggregated:
             aggregated_checkers.append(checker)
-    
+
     if aggregated:
-        title = 'Aggregated report'
-        information_summary = [list(checker.to_summary_row()) for checker in aggregated_checkers]
+        title = "Aggregated report"
+        information_summary = [
+            list(checker.to_summary_row()) for checker in aggregated_checkers
+        ]
 
         # create report (pdf and/or csv)
         if out_pdf:
             create_report_multiple(title, information_summary, out_path, print_log)
         if out_csv:
             # Prepend a header row for CSV export.
-            information_summary.insert(0, ['scenario_file', 'xml_loadable', 'xsd_valid', 'simulation_status', 'n_file_errors', 'n_dynamic_errors'])
-            csv_file = out_path / Path('aggregate_data.csv')
+            information_summary.insert(
+                0,
+                [
+                    "scenario_file",
+                    "xml_loadable",
+                    "xsd_valid",
+                    "simulation_status",
+                    "n_file_errors",
+                    "n_dynamic_errors",
+                ],
+            )
+            csv_file = out_path / Path("aggregate_data.csv")
             with open(csv_file, mode="w", newline="") as file:
                 writer = csv.writer(file)
                 writer.writerows(information_summary)
             if print_log:
-                logger.info(f'CSV report created at {csv_file}')
+                logger.info(f"CSV report created at {csv_file}")
         if print_log:
-            logger.info(f'Analysis completed for all .xosc files in {files_path}.')
+            logger.info(f"Analysis completed for all .xosc files in {files_path}.")
         return information_summary

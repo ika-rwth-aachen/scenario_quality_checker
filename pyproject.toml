@@ -4,25 +4,26 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scenario-quality-checker"
-version = "0.1.0"
+version = "0.2.0"
 description = "Analyze ASAM OpenSCENARIO .xosc files for structural, schema, and motion issues"
 readme = "README.md"
 license = "MIT"
 authors = [
-    {name = "Institute for Automotive Engineering (ika)", email = "info@ika.rwth-aachen.de"}
+    {name = "Christoph Glasmacher", email = "christoph.glasmacher@ika.rwth-aachen.de"},
+    {name = "ika - RWTH Aachen University", email = "opensource@ika.rwth-aachen.de"}
 ]
 requires-python = ">=3.9"
 dependencies = [
-    "fpdf2==2.8.1",
-    "loguru==0.7.3",
-    "matplotlib==3.9.4",
-    "numpy==2.0.2",
-    "pandas==2.2.3",
+    "fpdf2>=2.8.1",
+    "loguru>=0.7.3",
+    "matplotlib>=3.9.4",
+    "numpy>=2.0.2",
+    "pandas>=2.2.3",
     "scenariogeneration~=0.16.5",
-    "scipy==1.13.1",
-    "shapely==2.0.7",
+    "scipy>=1.13.1",
+    "shapely>=2.0.7",
     "typer>=0.15.2",
-    "xmlschema==3.4.4",
+    "xmlschema>=3.4.4",
 ]
 
 [project.scripts]
