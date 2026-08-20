@@ -52,8 +52,8 @@ pip install ".[web]"    # drop [web] for the CLI only
 
 Both give you two console scripts, `scenario-quality-checker` and `scenario-quality-checker-web`.
 With uv, prefix commands with `uv run` (no activation needed); with pip in an activated
-environment, call them directly. Pinned dependency sets are also available as `requirements.txt` and
-`requirements-web.txt`.
+environment, call them directly. `uv.lock` is the single source of pinned versions; export it with
+`uv export --extra web -o requirements.txt` if a pip-only workflow needs a pinned set.
 
 Optional: an [esmini](https://github.com/esmini/esmini) executable for simulation-based dynamics.
 
