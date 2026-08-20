@@ -1,16 +1,16 @@
 import csv
 import io
 import os
+import re
 import shutil
 import subprocess
 import threading
-import xml.etree.ElementTree as ET
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
-from xml.sax import make_parser
 from xml.sax.handler import ContentHandler
+from xml.sax.saxutils import escape
 
 import numpy as np
 import pandas as pd
@@ -21,6 +21,8 @@ import xmlschema
 from loguru import logger
 from scenariogeneration import xosc
 
+from . import safe_xml
+from .config import int_from_environment
 from .pdf import *
 from .pdf_report_creator import *
 from .thresholds import Thresholds
@@ -46,6 +48,46 @@ _SCHEMA_CACHE = {}
 _SCHEMA_CACHE_LOCK = threading.Lock()
 
 app = typer.Typer()
+
+#: A parameter reference in OpenSCENARIO is "$" followed by the parameter name.
+#: Matching the whole identifier is what keeps "$a" from replacing the prefix of
+#: "$abc": the regex captures "abc", which is then looked up as a whole.
+PARAMETER_REFERENCE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)")
+
+#: Ceilings for parameter expansion. A declaration holding a large value and
+#: referenced many times otherwise expands a small upload into gigabytes of
+#: memory before any other limit applies.
+MAX_PARAMETER_SUBSTITUTIONS = int_from_environment(
+    "SQC_MAX_PARAMETER_SUBSTITUTIONS", 50_000
+)
+MAX_PROCESSED_SCENARIO_BYTES = int_from_environment(
+    "SQC_MAX_PROCESSED_SCENARIO_BYTES", 64 * 1024 * 1024
+)
+
+
+class ScenarioExpansionError(ValueError):
+    """Raised when resolving parameter placeholders would blow up the file."""
+
+
+def _parse_position(exc):
+    """
+    Describe where a parse failed, without repeating the file path.
+
+    Args:
+        exc: Exception raised by an XML parser.
+    return: String such as " at line 4, column 12", or "" when unknown.
+    """
+    line = getattr(exc, "getLineNumber", None)
+    column = getattr(exc, "getColumnNumber", None)
+    try:
+        if line is not None and column is not None:
+            return f" at line {line()}, column {column()}"
+        position = getattr(exc, "position", None)
+        if position:
+            return f" at line {position[0]}, column {position[1]}"
+    except Exception:  # noqa: BLE001 - a missing position is not worth failing on.
+        pass
+    return ""
 
 
 def load_schema(schema_file):
@@ -112,6 +154,7 @@ class FileQualityChecker:
         self.work_dir = Path(work_dir) if work_dir else Path.cwd() / "results" / "tmp"
 
         self.xml_loadable = False
+        self.xml_error = None
         self.xsd_valid = False
         self.xsd_errors = []
         self.version = None
@@ -133,14 +176,14 @@ class FileQualityChecker:
         self.xml_loadable = self.is_xml_loadable()
         if not self.xml_loadable:
             return
-        elif self.print_log == True:
+        elif self.print_log:
             logger.info("XML is loadable")
 
         # Validate against the matching OpenSCENARIO XSD.
         self.xsd_valid, self.version = self.is_xsd_valid(schema_path)
         if not self.xsd_valid:
             return
-        elif print_log == True:
+        elif print_log:
             logger.info("XSD is valid")
 
         # Parse with scenariogeneration to access scenario structure.
@@ -202,16 +245,31 @@ class FileQualityChecker:
     def is_xml_loadable(self):
         """
         Check whether the file can be parsed as XML.
+
+        The parser refuses DOCTYPE declarations and entity definitions, so a
+        document built to expand into gigabytes is reported as not loadable
+        rather than parsed. OpenSCENARIO has no legitimate use for either.
         Args:
             None
         return: True if the file parses as XML, otherwise False.
         """
-        parser = make_parser()
+        parser = safe_xml.make_parser()
         parser.setContentHandler(ContentHandler())
         try:
-            parser.parse(self.file_path)
+            parser.parse(str(self.file_path))
+            self.xml_error = None
             return True
-        except Exception:
+        except safe_xml.UnsafeXmlError:
+            self.xml_error = (
+                "The file declares a DOCTYPE or an XML entity. Both are refused "
+                "because they can be used to expand a small file into a very "
+                "large one; OpenSCENARIO does not need them."
+            )
+            return False
+        except Exception as exc:
+            # The exception text carries the file path, which is a server
+            # location for uploads, so only the parse position is reported.
+            self.xml_error = f"The file is not well-formed XML{_parse_position(exc)}."
             return False
 
     def is_xsd_valid(self, schema_path):
@@ -228,7 +286,7 @@ class FileQualityChecker:
         # parses as XML can still be missing it, so report that as a finding
         # instead of raising out of the constructor.
         try:
-            tree = ET.parse(self.file_path)
+            tree = safe_xml.parse(self.file_path)
             root = tree.getroot()
             header = root.find("FileHeader")
             if header is None:
@@ -236,8 +294,13 @@ class FileQualityChecker:
             revMajor = header.attrib["revMajor"]
             revMinor = header.attrib["revMinor"]
             int(revMajor)
-        except Exception as e:
-            msg = f"Could not read the OpenSCENARIO version from the file header: {e}"
+        except Exception:
+            # The exception text would carry the file path, a server location
+            # for uploads, so it is deliberately not included here.
+            msg = (
+                "Could not read the OpenSCENARIO version from the file header: "
+                "FileHeader with numeric revMajor and revMinor attributes is missing."
+            )
             self.xsd_errors.append(msg)
             if self.print_log:
                 logger.error(msg)
@@ -257,21 +320,24 @@ class FileQualityChecker:
             return (False, xsd_version)
 
         if not os.path.isfile(schema_file):
-            msg = f"Schema file for version {xsd_version} not available: {schema_file}"
+            msg = f"OpenSCENARIO version {xsd_version} is not supported."
             self.xsd_errors.append(msg)
             if self.print_log:
                 logger.error(msg)
             return (False, xsd_version)
 
         xsd = load_schema(schema_file)
-        is_valid = xsd.is_valid(self.file_path)
+        # Validate the tree parsed above rather than the path: xmlschema would
+        # otherwise open the untrusted file with its own parser, which expands
+        # entities. Findings are identical either way.
+        is_valid = xsd.is_valid(tree)
 
         # If validation fails, collect and log detailed errors.
         if not is_valid:
             try:
                 # Limit the number of stored errors to keep PDFs readable.
                 max_errors = 20
-                for idx, error in enumerate(xsd.iter_errors(self.file_path)):
+                for idx, error in enumerate(xsd.iter_errors(tree)):
                     if idx >= max_errors:
                         more_msg = (
                             f"... and more XSD errors (showing first {max_errors})."
@@ -287,9 +353,10 @@ class FileQualityChecker:
                         logger.error(
                             f"XSD validation error in {self.file_path} (version {xsd_version}): {err_msg}"
                         )
-            except Exception as e:
+            except Exception:
                 fallback_msg = (
-                    f"Failed to collect XSD validation errors for {self.file_path}: {e}"
+                    "The file does not validate against the OpenSCENARIO schema, "
+                    "but the individual errors could not be collected."
                 )
                 self.xsd_errors.append(fallback_msg)
                 if self.print_log:
@@ -346,7 +413,7 @@ class FileQualityChecker:
             None
         return: Date string in DD.MM.YYYY format or None.
         """
-        tree = ET.parse(self.file_path)
+        tree = safe_xml.parse(self.file_path)
         root = tree.getroot()
         header = root.find("FileHeader")
         if header is not None and "date" in header.attrib:
@@ -447,6 +514,26 @@ class FileQualityChecker:
             swimangle_errors,
             swimangle_warnings,
         )
+
+    def entity_dynamics(self, entity_name):
+        """
+        Return the computed dynamics of one entity as a DataFrame.
+
+        This is the supported way to get at the per-entity trace: the web layer
+        used to call three private helpers in sequence, which meant any
+        refactoring of the checker silently degraded the web output.
+
+        Args:
+            entity_name: Name of the entity to compute.
+        return: DataFrame with time, acceleration and swimangle columns, or
+            None when the entity has no trace data.
+        """
+        entity_data = self._get_dynamic_data().get(entity_name)
+        if not entity_data:
+            return None
+        positions, times = entity_data
+        dataframe = self._build_dynamic_data_df(positions, times)
+        return self._calculate_acceleration_swimangle(dataframe)
 
     def _get_dynamic_data(self):
         """
@@ -550,7 +637,7 @@ class FileQualityChecker:
         # OpenDRIVE file is resolved to an absolute path; otherwise keep
         # RoadNetwork but remove invalid LogicFile children.
         try:
-            tree = ET.parse(scenario_tmp)
+            tree = safe_xml.parse(scenario_tmp)
             root = tree.getroot()
             xosc_dir = Path(self.file_path).parent
 
@@ -592,10 +679,16 @@ class FileQualityChecker:
                         elem.set(attr_name, str(candidate))
 
             tree.write(scenario_tmp, encoding="utf-8", xml_declaration=True)
-        except Exception:
-            # If anything goes wrong while tweaking RoadNetwork, fall back
-            # to the plain copied scenario file.
-            pass
+        except (
+            OSError,
+            ValueError,
+            safe_xml.UnsafeXmlError,
+            safe_xml.ParseError,
+        ) as exc:
+            # If anything goes wrong while tweaking RoadNetwork, fall back to
+            # the plain copied scenario file - but say so, because a silent
+            # fallback here shows up much later as unresolvable paths.
+            logger.debug(f"Kept the unmodified scenario copy for esmini: {exc}")
 
         log_file = tmp_root / f"esmini_log_{run_token}.csv"
 
@@ -659,7 +752,7 @@ class FileQualityChecker:
         returned; otherwise, None is returned.
         """
         try:
-            tree = ET.parse(self.file_path)
+            tree = safe_xml.parse(self.file_path)
             root = tree.getroot()
         except Exception:
             return None
@@ -816,7 +909,7 @@ class FileQualityChecker:
             None
         return: Dict of parameter name to value.
         """
-        tree = ET.parse(self.file_path)
+        tree = safe_xml.parse(self.file_path)
         root = tree.getroot()
 
         parameters = {}
@@ -839,16 +932,52 @@ class FileQualityChecker:
     @staticmethod
     def _replace_parameters_in_content(content, parameters):
         """
-        Replace all $param$ placeholders with actual parameter values.
+        Replace every $parameter reference with the declared value.
+
+        Three things matter here beyond the substitution itself. References are
+        matched as whole identifiers, so "$a" no longer replaces the first two
+        characters of "$abc". Values are XML-escaped, because the result is
+        written out and parsed again - an unescaped "<" or quote in a value
+        would otherwise change the structure of the document. And the expansion
+        is bounded, because the input is untrusted: a large value referenced
+        many times is a cheap way to turn a small upload into gigabytes.
+
         Args:
             content: XML content as a string.
             parameters: Dict of parameter name to value.
         return: Updated content string.
+        raises ScenarioExpansionError: The expansion exceeds its limits.
         """
-        for name, value in parameters.items():
-            placeholder = f"${name}"
-            content = content.replace(placeholder, value)
-        return content
+        # Never shrink below the input: a file that is already large should
+        # fail on the upload limit, not here.
+        size_limit = max(MAX_PROCESSED_SCENARIO_BYTES, len(content))
+        state = {"count": 0, "size": len(content)}
+
+        def substitute(match):
+            name = match.group(1)
+            value = parameters.get(name)
+            if value is None:
+                # Not a declared parameter (or declared without a value): leave
+                # the text untouched so the schema check still sees it.
+                return match.group(0)
+
+            replacement = escape(str(value), {'"': "&quot;", "'": "&apos;"})
+            state["count"] += 1
+            state["size"] += len(replacement) - len(match.group(0))
+
+            if state["count"] > MAX_PARAMETER_SUBSTITUTIONS:
+                raise ScenarioExpansionError(
+                    f"The scenario references parameters more than "
+                    f"{MAX_PARAMETER_SUBSTITUTIONS} times."
+                )
+            if state["size"] > size_limit:
+                raise ScenarioExpansionError(
+                    f"Resolving the scenario parameters expands the file beyond "
+                    f"{size_limit} bytes."
+                )
+            return replacement
+
+        return PARAMETER_REFERENCE.sub(substitute, content)
 
     def _check_actors_defined(self, entity_names):
         """

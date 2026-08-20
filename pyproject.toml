@@ -12,8 +12,14 @@ authors = [
     {name = "Christoph Glasmacher", email = "christoph.glasmacher@ika.rwth-aachen.de"},
     {name = "ika - RWTH Aachen University", email = "opensource@ika.rwth-aachen.de"}
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
+    # Transitive via typer and uvicorn, pinned here because 8.1.8 carries
+    # PYSEC-2026-2132. The fix is only published for Python 3.10 and newer, so
+    # the marker keeps the declared 3.9 support working while every runtime
+    # that can take the fix gets it.
+    "click>=8.3.3; python_version >= '3.10'",
+    "defusedxml>=0.7.1",
     "fpdf2>=2.8.1",
     "loguru>=0.7.3",
     "matplotlib>=3.9.4",
@@ -35,6 +41,7 @@ web = [
 dev = [
     "pytest>=8",
     "httpx>=0.27",
+    "ruff>=0.6",
 ]
 
 [project.scripts]
@@ -46,10 +53,39 @@ Repository = "https://github.com/ika-rwth-aachen/scenario_quality_checker"
 
 [tool.setuptools.packages.find]
 where = ["."]
-exclude = ["assets", "example_files", "tests*"]
+exclude = ["tests*"]
 
 [tool.setuptools.package-data]
-quality_checker = ["schemas/*.xsd", "webapp/static/*"]
+quality_checker = [
+    "schemas/*.xsd",
+    "webapp/static/*",
+    "example_files/*.xosc",
+    "assets/*",
+]
+
+[tool.ruff]
+# Configured explicitly so the CI gate and a local `ruff check .` agree; without
+# this, whichever rule set a developer's global config happens to enable decides
+# the outcome.
+target-version = "py39"
+exclude = ["build", ".venv", "results"]
+
+[tool.ruff.lint]
+# The ruff defaults plus import sorting. Deliberately not the whole catalogue:
+# a gate is only useful if it passes, and the wider families flag long-standing
+# idioms in this codebase (typer's Option defaults, the star imports below)
+# rather than defects.
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["quality_checker", "conftest"]
+
+[tool.ruff.lint.per-file-ignores]
+# The report modules deliberately re-export through star imports; the CLI needs
+# the matplotlib backend selected before anything imports pyplot.
+"quality_checker/quality_checker.py" = ["F403", "F405"]
+"quality_checker/pdf_report_creator.py" = ["F403", "F405"]
+"quality_checker/__main__.py" = ["E402"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -7,6 +7,10 @@ get the findings, the dynamics plots and the PDF/CSV reports in the browser.
 The checker keeps state in module-level matplotlib figures and writes
 intermediate files, so all analysis runs on a single worker thread; the event
 loop stays free while a check is in progress.
+
+The service is anonymous by design, which makes resource discipline the main
+security control: every limit here exists because the input is untrusted and
+the analysis worker is shared by everyone.
 """
 
 from __future__ import annotations
@@ -17,11 +21,11 @@ import re
 import shutil
 import tempfile
 import time
-import xml.etree.ElementTree as ET
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from importlib import resources
 from pathlib import Path
 from typing import List, Optional
 from uuid import uuid4
@@ -31,20 +35,20 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
+from .. import safe_xml
+from ..config import int_from_environment
 from ..pdf_report_creator import create_report_multiple
 from ..quality_checker import (
     DEFAULT_SCHEMA_PATH,
     FileQualityChecker,
+    ScenarioExpansionError,
     write_aggregate_csv,
 )
 from ..thresholds import Thresholds
 from .results import PLOT_FILES, serialize_checker, summary_row_json
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-REPOSITORY_ROOT = PACKAGE_ROOT.parent
 STATIC_DIRECTORY = Path(__file__).with_name("static")
-EXAMPLE_DIRECTORY = REPOSITORY_ROOT / "example_files"
-BRANDING_DIRECTORY = REPOSITORY_ROOT / "assets"
 
 WORK_ROOT = Path(tempfile.gettempdir()) / "scenario-quality-checker-web"
 SESSION_COOKIE_NAME = "sqc_session"
@@ -53,32 +57,132 @@ SESSION_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 ALLOWED_SCENARIO_SUFFIXES = {".xosc"}
 ALLOWED_MAP_SUFFIXES = {".xodr", ".xml"}
 UPLOAD_CHUNK_BYTES = 1024 * 1024
+ZIP_CHUNK_BYTES = 1024 * 1024
 
 
-def _int_from_environment(name, default):
-    """Read a positive integer setting from the environment."""
+def bundled_directory(name, environment_name):
+    """
+    Locate a directory shipped with the package, whatever the install layout.
+
+    Resolution order is an explicit environment override, then the package data
+    installed next to the code, then the source checkout. Deriving the path
+    from the parent of the package instead would point at site-packages under a
+    normal pip install, so what got served would depend on how the package
+    happened to be installed.
+
+    Args:
+        name: Directory name inside the package.
+        environment_name: Environment variable that overrides the location.
+    return: Path, which may not exist; callers check before serving from it.
+    """
+    override = os.environ.get(environment_name)
+    if override:
+        candidate = Path(override).expanduser()
+        if candidate.is_dir():
+            return candidate.resolve()
+        logger.warning(
+            f"{environment_name} does not point at a directory, falling back to "
+            f"the bundled '{name}'"
+        )
+
     try:
-        value = int(os.environ.get(name, default))
-    except (TypeError, ValueError):
-        return default
-    return value if value > 0 else default
+        packaged = Path(str(resources.files("quality_checker") / name))
+        if packaged.is_dir():
+            return packaged
+    except (ModuleNotFoundError, TypeError, OSError, NotADirectoryError):
+        pass
+
+    return PACKAGE_ROOT / name
 
 
-MAX_UPLOAD_BYTES = _int_from_environment("SQC_MAX_UPLOAD_BYTES", 20 * 1024 * 1024)
-MAX_BATCH_FILES = _int_from_environment("SQC_MAX_BATCH_FILES", 50)
-MAX_ZIP_UNCOMPRESSED_BYTES = _int_from_environment(
+EXAMPLE_DIRECTORY = bundled_directory("example_files", "SQC_EXAMPLE_DIR")
+BRANDING_DIRECTORY = bundled_directory("assets", "SQC_BRANDING_DIR")
+
+MAX_UPLOAD_BYTES = int_from_environment("SQC_MAX_UPLOAD_BYTES", 20 * 1024 * 1024)
+MAX_BATCH_FILES = int_from_environment("SQC_MAX_BATCH_FILES", 50)
+MAX_ZIP_UNCOMPRESSED_BYTES = int_from_environment(
     "SQC_MAX_ZIP_UNCOMPRESSED_BYTES", 200 * 1024 * 1024
 )
-SESSION_TTL_SECONDS = _int_from_environment("SQC_SESSION_TTL_SECONDS", 3600)
-MAX_SESSIONS = _int_from_environment("SQC_MAX_SESSIONS", 200)
-RUN_TIMEOUT_SECONDS = _int_from_environment("SQC_RUN_TIMEOUT_SECONDS", 120)
+# A member that expands by more than this factor is a compression bomb, not a
+# scenario. Plain XML compresses well, but nowhere near this well.
+MAX_ZIP_COMPRESSION_RATIO = int_from_environment("SQC_MAX_ZIP_COMPRESSION_RATIO", 200)
+
+SESSION_TTL_SECONDS = int_from_environment("SQC_SESSION_TTL_SECONDS", 3600)
+MAX_SESSIONS = int_from_environment("SQC_MAX_SESSIONS", 200)
+# A session that was active this recently is never evicted to make room for a
+# new one: losing a working user's results is worse than refusing a newcomer.
+SESSION_EVICTION_GRACE_SECONDS = int_from_environment(
+    "SQC_SESSION_EVICTION_GRACE_SECONDS", 120
+)
+MAX_RUNS_PER_SESSION = int_from_environment("SQC_MAX_RUNS_PER_SESSION", 100)
+MAX_BATCHES_PER_SESSION = int_from_environment("SQC_MAX_BATCHES_PER_SESSION", 10)
+
+RUN_TIMEOUT_SECONDS = int_from_environment("SQC_RUN_TIMEOUT_SECONDS", 120)
+# How many checks may be waiting for the single worker before new ones are
+# refused. Queueing without a bound turns one slow scenario into an outage for
+# everybody behind it; shedding load with 503 keeps the service answering.
+MAX_QUEUED_CHECKS = int_from_environment("SQC_MAX_QUEUED_CHECKS", 8)
+
+# An absolute ceiling on a request body. The per-file limit multiplied by the
+# batch limit is around a gigabyte with the defaults, which is far more than
+# any real batch and far more than the container has memory for.
+MAX_REQUEST_BYTES = min(
+    int_from_environment("SQC_MAX_REQUEST_BYTES", 256 * 1024 * 1024),
+    MAX_UPLOAD_BYTES * (MAX_BATCH_FILES + 1),
+)
+
+
+def _rate_limit_from_environment(default=60):
+    """
+    Read the rate limit, where 0 explicitly disables it.
+
+    int_from_environment() rejects non-positive values so a typo cannot silently
+    remove a limit. Here 0 is a meaningful setting - "the proxy handles this" -
+    so it needs its own parser.
+
+    Args:
+        default: Value used when unset or unparsable.
+    return: int, 0 meaning no limit.
+    """
+    try:
+        value = int(os.environ.get("SQC_RATE_LIMIT_REQUESTS", default))
+    except (TypeError, ValueError):
+        return default
+    return max(value, 0)
+
+
+RATE_LIMIT_REQUESTS = _rate_limit_from_environment()
+RATE_LIMIT_WINDOW_SECONDS = int_from_environment("SQC_RATE_LIMIT_WINDOW_SECONDS", 60)
 CLEANUP_INTERVAL_SECONDS = 300
+
+#: Sent on every response. The frontend loads no third-party asset of any kind,
+#: so the strictest useful policy applies unchanged - there is nothing to
+#: allowlist. 'frame-ancestors' is what stops the app being framed for
+#: clickjacking; the legacy X-Frame-Options header repeats it for old browsers.
+CONTENT_SECURITY_POLICY = "; ".join(
+    (
+        "default-src 'self'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+        "object-src 'none'",
+        "script-src 'self'",
+        "style-src 'self'",
+        "img-src 'self' data:",
+        "connect-src 'self'",
+    )
+)
+HSTS_VALUE = "max-age=31536000; includeSubDomains"
 
 # One worker: the checker and matplotlib are not safe to run concurrently, and
 # serializing here is cheaper than adding locks around pyplot. The executor is
 # owned by the application lifespan, so a restarted app gets a fresh one instead
 # of a shut-down pool that rejects every job.
 _executor = None
+
+# Checks handed to the worker and not yet finished. Only mutated from the event
+# loop thread, so a plain integer is enough.
+_in_flight = 0
 
 
 def checker_executor():
@@ -142,16 +246,89 @@ class Session:
     batches: dict = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
+    def add_run(self, run):
+        """
+        Register a run, dropping the oldest ones past the per-session cap.
+
+        Every run pins a whole checker - trajectory frames included - until the
+        session expires, so an unbounded run dictionary is a slow memory leak
+        that only a session TTL an hour away ever cleans up.
+
+        Args:
+            run: Run to remember.
+        return: None.
+        """
+        self.runs[run.run_id] = run
+        while len(self.runs) > MAX_RUNS_PER_SESSION:
+            _, evicted = _pop_oldest(self.runs)
+            shutil.rmtree(evicted.directory, ignore_errors=True)
+
+    def add_batch(self, batch):
+        """
+        Register a batch, dropping the oldest ones past the per-session cap.
+
+        Args:
+            batch: Batch to remember.
+        return: None.
+        """
+        self.batches[batch.batch_id] = batch
+        while len(self.batches) > MAX_BATCHES_PER_SESSION:
+            # Only the aggregated view is forgotten. The directory stays until
+            # the session ends, because the individual runs of the batch live
+            # underneath it and may still be open in the browser.
+            _pop_oldest(self.batches)
+
+
+def _pop_oldest(mapping):
+    """
+    Remove and return the first-inserted entry of a dict.
+
+    Args:
+        mapping: Dict to evict from; insertion order is the age order.
+    return: (key, value) of the removed entry.
+    """
+    key = next(iter(mapping))
+    return key, mapping.pop(key)
+
 
 class SessionStore:
     """In-memory session registry with TTL-based cleanup and a size cap."""
 
-    def __init__(self, ttl_seconds=SESSION_TTL_SECONDS, max_sessions=MAX_SESSIONS):
+    def __init__(
+        self,
+        ttl_seconds=SESSION_TTL_SECONDS,
+        max_sessions=MAX_SESSIONS,
+        eviction_grace_seconds=SESSION_EVICTION_GRACE_SECONDS,
+    ):
         self._sessions = {}
         self._ttl_seconds = ttl_seconds
         self._max_sessions = max_sessions
+        self._eviction_grace_seconds = eviction_grace_seconds
+
+    def touch(self, session_id):
+        """
+        Return an existing session and mark it as used, or None.
+
+        Args:
+            session_id: Identifier taken from the request cookie.
+        return: Session or None. A cookie value the store does not know is
+            never adopted as a session id, which is what keeps an attacker from
+            planting one in a victim's browser.
+        """
+        session = self._sessions.get(session_id)
+        if session is not None:
+            session.last_seen = time.monotonic()
+        return session
 
     def get_or_create(self, session_id):
+        """
+        Return the session for an id, creating it when the store has room.
+
+        Args:
+            session_id: Identifier to create or look up.
+        return: Session.
+        raises SessionCapacityError: The store is full of active sessions.
+        """
         session = self._sessions.get(session_id)
         if session is None:
             self._evict_if_full()
@@ -161,14 +338,47 @@ class SessionStore:
         return session
 
     def _evict_if_full(self):
-        """Drop the least recently used sessions so the store stays bounded."""
+        """
+        Make room for one more session, refusing rather than evicting the live.
+
+        Only sessions idle past the grace period are candidates. Without that
+        scope, roughly MAX_SESSIONS cookie-less requests would evict every
+        session in use, deleting working directories and making other people's
+        in-flight results unreachable.
+
+        Args:
+            None
+        return: None.
+        raises SessionCapacityError: Every session is still active.
+        """
         if len(self._sessions) < self._max_sessions:
             return
         self.cleanup_expired()
+
+        idle_before = time.monotonic() - self._eviction_grace_seconds
         while len(self._sessions) >= self._max_sessions:
-            oldest = min(self._sessions.values(), key=lambda session: session.last_seen)
+            candidates = [
+                session
+                for session in self._sessions.values()
+                if session.last_seen < idle_before
+            ]
+            if not candidates:
+                raise SessionCapacityError()
+            oldest = min(candidates, key=lambda session: session.last_seen)
             self._sessions.pop(oldest.session_id, None)
             shutil.rmtree(WORK_ROOT / oldest.session_id, ignore_errors=True)
+
+    def forget(self, session_id):
+        """
+        Drop one session and delete its working directory.
+
+        Args:
+            session_id: Session to remove.
+        return: True when a session was removed.
+        """
+        removed = self._sessions.pop(session_id, None) is not None
+        shutil.rmtree(WORK_ROOT / session_id, ignore_errors=True)
+        return removed
 
     def cleanup_expired(self):
         """Drop sessions past their TTL and delete their working directories."""
@@ -203,7 +413,155 @@ class SessionStore:
             shutil.rmtree(directory, ignore_errors=True)
 
 
+class SessionCapacityError(Exception):
+    """Raised when every session slot is held by an active session."""
+
+
 store = SessionStore()
+
+
+# ---------------------------------------------------------------------------
+# Rate limiting
+# ---------------------------------------------------------------------------
+
+
+class RateLimiter:
+    """
+    Fixed-window request counter per client address.
+
+    The expensive endpoints are anonymous and each one can occupy the single
+    analysis worker for the whole run timeout, so without a limit one client
+    can hold the service for everybody. This is deliberately simple and
+    in-process: a reverse proxy is the better place for it, but the application
+    must not be wide open when nobody configured one.
+    """
+
+    #: Upper bound on tracked addresses, so the limiter cannot itself be used
+    #: to grow memory without bound.
+    MAX_TRACKED_CLIENTS = 10_000
+
+    def __init__(self, limit=None, window_seconds=None):
+        self._limit = RATE_LIMIT_REQUESTS if limit is None else limit
+        self._window = (
+            RATE_LIMIT_WINDOW_SECONDS if window_seconds is None else window_seconds
+        )
+        self._counters = {}
+
+    def allow(self, client):
+        """
+        Count one request and report whether it stays within the limit.
+
+        Args:
+            client: Client address, or None when it is unknown.
+        return: True when the request may proceed.
+        """
+        if self._limit <= 0:
+            return True
+
+        now = time.monotonic()
+        window_start = now - (now % self._window)
+        key = client or "unknown"
+
+        started, count = self._counters.get(key, (window_start, 0))
+        if started < window_start:
+            started, count = window_start, 0
+
+        count += 1
+        self._counters[key] = (started, count)
+        if len(self._counters) > self.MAX_TRACKED_CLIENTS:
+            self._forget_stale(window_start)
+        return count <= self._limit
+
+    def _forget_stale(self, window_start):
+        """Drop counters from earlier windows to bound the tracking table."""
+        stale = [
+            key
+            for key, (started, _) in self._counters.items()
+            if started < window_start
+        ]
+        for key in stale:
+            self._counters.pop(key, None)
+        if len(self._counters) > self.MAX_TRACKED_CLIENTS:
+            self._counters.clear()
+
+    def reset(self):
+        """Forget every counter. Used by tests."""
+        self._counters.clear()
+
+
+rate_limiter = RateLimiter()
+
+#: Endpoints that create state and occupy the analysis worker.
+RATE_LIMITED_PATHS = ("/api/checks", "/api/batches")
+
+
+# ---------------------------------------------------------------------------
+# Request budget and audit logging
+# ---------------------------------------------------------------------------
+
+
+class RequestBudget:
+    """Total number of bytes a single request is allowed to write to disk."""
+
+    def __init__(self, limit=None):
+        self.limit = MAX_REQUEST_BYTES if limit is None else limit
+        self.used = 0
+
+    def spend(self, count):
+        """
+        Account for bytes read from the request body.
+
+        Args:
+            count: Number of bytes just read.
+        return: None.
+        raises HTTPException: 413 once the request exceeds its total budget.
+        """
+        self.used += count
+        if self.used > self.limit:
+            raise HTTPException(
+                status_code=413,
+                detail=f"The request body exceeds the {self.limit} byte limit",
+            )
+
+
+def request_budget(request):
+    """Return the byte budget of a request, creating it on first use."""
+    budget = getattr(request.state, "budget", None)
+    if budget is None:
+        budget = RequestBudget()
+        request.state.budget = budget
+    return budget
+
+
+def request_id(request):
+    """Return the correlation id of a request, if the middleware set one."""
+    return getattr(request.state, "request_id", "-")
+
+
+def session_id_of(request):
+    """Return the session id bound to a request, for log lines."""
+    return getattr(request.state, "session_id", "-")
+
+
+def audit(request, event, detail=""):
+    """
+    Log a security-relevant rejection.
+
+    Uploaded content is never logged - only what was refused and why, tied to
+    the correlation id the client also sees, so a user-reported error can be
+    found in the log.
+
+    Args:
+        request: Incoming request.
+        event: Short machine-readable event name.
+        detail: Extra context; must not contain file contents.
+    return: None.
+    """
+    client = request.client.host if request.client else "-"
+    logger.warning(
+        f"request={request_id(request)} session={session_id_of(request)} "
+        f"client={client} event={event} {detail}".strip()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +598,7 @@ def confined_path(base_directory, relative_path, start_directory=None):
     return candidate
 
 
-async def store_upload(upload, destination, max_bytes=None):
+async def store_upload(upload, destination, max_bytes=None, budget=None):
     """
     Stream an upload to disk, rejecting anything past the size limit.
 
@@ -249,6 +607,9 @@ async def store_upload(upload, destination, max_bytes=None):
         destination: Target path; parent directories are created.
         max_bytes: Maximum accepted size, defaults to MAX_UPLOAD_BYTES. Read at
             call time so the limit stays configurable.
+        budget: Optional RequestBudget counting bytes across every file of the
+            request, so a chunked body that omits Content-Length cannot get
+            past the per-request ceiling by splitting itself up.
     return: Number of bytes written.
     raises HTTPException: 413 when the upload is too large.
     """
@@ -262,6 +623,8 @@ async def store_upload(upload, destination, max_bytes=None):
                 if not chunk:
                     break
                 written += len(chunk)
+                if budget is not None:
+                    budget.spend(len(chunk))
                 if written > max_bytes:
                     raise HTTPException(
                         status_code=413,
@@ -299,7 +662,7 @@ def require_suffix(name, allowed, kind):
 def scenario_map_reference(scenario_path):
     """Return the RoadNetwork/LogicFile filepath a scenario references, if any."""
     try:
-        root = ET.parse(scenario_path).getroot()
+        root = safe_xml.parse(scenario_path).getroot()
     except Exception:  # noqa: BLE001 - unparsable files are reported by the checker.
         return None
     logic_file = root.find("RoadNetwork/LogicFile")
@@ -308,7 +671,7 @@ def scenario_map_reference(scenario_path):
     return logic_file.attrib.get("filepath") or None
 
 
-async def link_map_upload(map_upload, scenario_path, run_directory):
+async def link_map_upload(map_upload, scenario_path, run_directory, budget=None):
     """
     Store an uploaded OpenDRIVE file where the scenario expects to find it.
 
@@ -322,6 +685,7 @@ async def link_map_upload(map_upload, scenario_path, run_directory):
         map_upload: Optional UploadFile with the .xodr, may be None.
         scenario_path: Path of the stored scenario file.
         run_directory: Directory owning this run.
+        budget: Optional RequestBudget for the whole request.
     return: Dict describing what happened, for the API response.
     """
     reference = scenario_map_reference(scenario_path)
@@ -347,7 +711,7 @@ async def link_map_upload(map_upload, scenario_path, run_directory):
         else None
     )
     target = resolved or scenario_path.parent / safe_upload_name(map_upload.filename)
-    await store_upload(map_upload, target)
+    await store_upload(map_upload, target, budget=budget)
 
     linked_as = str(target.relative_to(run_directory))
     if reference is None:
@@ -440,23 +804,98 @@ def _check_scenario(scenario_path, thresholds, run_directory):
     return checker, plots
 
 
-async def in_worker(function, *args):
-    """Run blocking work on the single checker thread, with a timeout."""
-    loop = asyncio.get_running_loop()
+def _release_slot(future):
+    """
+    Free the worker slot once the job really finished.
+
+    Args:
+        future: The executor future that just completed.
+    return: None.
+    """
+    global _in_flight
+    _in_flight -= 1
     try:
-        return await asyncio.wait_for(
-            loop.run_in_executor(checker_executor(), function, *args),
-            RUN_TIMEOUT_SECONDS,
+        # Retrieving the exception keeps asyncio from reporting it as never
+        # consumed when the request already gave up on this job.
+        future.exception()
+    except (asyncio.CancelledError, asyncio.InvalidStateError):
+        pass
+
+
+#: Checker failures that are the uploader's fault and can be reported verbatim,
+#: mapped to the status code they deserve. Everything else is an internal
+#: failure and is reported as a correlation id instead.
+INPUT_ERRORS = (
+    (ScenarioExpansionError, 413),
+    (safe_xml.UnsafeXmlError, 400),
+    (safe_xml.ParseError, 400),
+)
+
+
+async def in_worker(request, function, *args):
+    """
+    Run blocking work on the single checker thread.
+
+    The timeout bounds the HTTP response, not the work: a thread in a
+    ThreadPoolExecutor cannot be cancelled, so a scenario that never terminates
+    keeps the only worker busy even after the client got its 504. That is why
+    the queue is capped - requests that would pile up behind such a job are
+    refused immediately instead of waiting for a worker that is not coming.
+
+    Args:
+        request: Incoming request, used for the correlation id in error logs.
+        function: Callable to run on the worker thread.
+        *args: Arguments for the callable.
+    return: Whatever the callable returned.
+    raises HTTPException: 503 when the queue is full, 504 on timeout, 4xx for
+        bad input, 500 with a correlation id for anything else.
+    """
+    global _in_flight
+
+    if _in_flight >= MAX_QUEUED_CHECKS:
+        audit(request, "queue_full", f"in_flight={_in_flight}")
+        raise HTTPException(
+            status_code=503,
+            detail="The service is busy checking other scenarios. Try again shortly.",
         )
+
+    loop = asyncio.get_running_loop()
+    future = loop.run_in_executor(checker_executor(), function, *args)
+    _in_flight += 1
+    future.add_done_callback(_release_slot)
+
+    try:
+        # Shielded, so the timeout does not cancel the future the slot
+        # accounting depends on; the work is released when it truly ends.
+        return await asyncio.wait_for(asyncio.shield(future), RUN_TIMEOUT_SECONDS)
     except asyncio.TimeoutError as exc:
+        audit(request, "check_timeout", f"limit={RUN_TIMEOUT_SECONDS}s")
         raise HTTPException(
             status_code=504,
-            detail=f"The check did not finish within {RUN_TIMEOUT_SECONDS} seconds",
+            detail=(f"The check did not finish within {RUN_TIMEOUT_SECONDS} seconds"),
         ) from exc
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        for error_type, status_code in INPUT_ERRORS:
+            if isinstance(exc, error_type):
+                audit(request, "bad_scenario", f"type={type(exc).__name__}")
+                raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+
+        # Anything else is a bug or an unexpected library failure. The text can
+        # carry server paths and library internals, so it goes to the log and
+        # the client gets an id to quote instead.
+        logger.opt(exception=exc).error(
+            f"request={request_id(request)} session={session_id_of(request)} "
+            f"event=check_failed"
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "The scenario could not be checked because of an internal error. "
+                f"Reference: {request_id(request)}"
+            ),
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -486,7 +925,7 @@ async def application_lifespan(app):
 
 
 app = FastAPI(
-    title="scenario-quality-checker", version="0.1.0", lifespan=application_lifespan
+    title="scenario-quality-checker", version="0.2.0", lifespan=application_lifespan
 )
 
 STATIC_DIRECTORY.mkdir(parents=True, exist_ok=True)
@@ -496,27 +935,58 @@ if BRANDING_DIRECTORY.is_dir():
 
 
 def secure_cookies(request):
-    """Set the Secure flag when the request itself arrived over HTTPS."""
+    """
+    Decide whether the session cookie carries the Secure flag.
+
+    'auto' derives the answer from the request scheme. Behind a TLS-terminating
+    proxy that scheme is only right when uvicorn is told to trust the proxy's
+    forwarded headers, which main() does; X-Forwarded-Proto is consulted as a
+    fallback for other servers. Trusting a spoofed value here can only turn the
+    flag on, never off, so the failure mode is a cookie the browser refuses to
+    send over plaintext - not one it leaks.
+
+    Args:
+        request: Incoming request.
+    return: True when the Secure flag must be set.
+    """
     configured = os.environ.get("SQC_SECURE_COOKIES", "auto").lower()
     if configured in {"1", "true", "yes"}:
         return True
     if configured in {"0", "false", "no"}:
         return False
-    return request.url.scheme == "https"
+    if request.url.scheme == "https":
+        return True
+    forwarded = request.headers.get("x-forwarded-proto", "")
+    return forwarded.split(",")[0].strip().lower() == "https"
 
 
 @app.middleware("http")
 async def bind_session(request, call_next):
-    """Attach a session to every request and refresh its cookie."""
+    """
+    Attach the session of a request, without creating one for every caller.
+
+    A session is only materialised by a request that actually creates state.
+    Minting one on any GET made session creation free and unauthenticated, so a
+    few hundred cookie-less requests could evict every session in use.
+    """
     raw_id = request.cookies.get(SESSION_COOKIE_NAME, "")
-    session_id = raw_id if SESSION_ID_PATTERN.match(raw_id) else uuid4().hex
-    request.state.session = store.get_or_create(session_id)
+    session = store.touch(raw_id) if SESSION_ID_PATTERN.match(raw_id) else None
+    request.state.session = session
+    # An id the client supplied but this process does not know is never
+    # adopted: a fresh one is minted if and when state is created. That is what
+    # keeps a cookie planted in someone's browser from becoming their session.
+    request.state.session_id = session.session_id if session else uuid4().hex
 
     response = await call_next(request)
-    if raw_id != session_id:
+
+    session = getattr(request.state, "session", None)
+    if session is not None:
+        # Refreshed on every response, so the cookie in the browser expires at
+        # the same time as the server-side session rather than an hour after it
+        # was first issued.
         response.set_cookie(
             SESSION_COOKIE_NAME,
-            session_id,
+            session.session_id,
             httponly=True,
             samesite="lax",
             secure=secure_cookies(request),
@@ -526,17 +996,61 @@ async def bind_session(request, call_next):
 
 
 @app.middleware("http")
-async def reject_oversized_requests(request, call_next):
-    """Reject too-large uploads before reading the body."""
+async def throttle_and_limit_size(request, call_next):
+    """Refuse abusive or oversized requests before reading the body."""
     if request.method == "POST":
         declared = request.headers.get("content-length")
-        limit = MAX_UPLOAD_BYTES * (MAX_BATCH_FILES + 1)
-        if declared and declared.isdigit() and int(declared) > limit:
+        if declared and declared.isdigit() and int(declared) > MAX_REQUEST_BYTES:
+            audit(request, "request_too_large", f"declared={declared}")
             return JSONResponse(
-                {"detail": f"Request body exceeds the {limit} byte limit"},
+                {"detail": f"Request body exceeds the {MAX_REQUEST_BYTES} byte limit"},
                 status_code=413,
             )
+
+        if request.url.path in RATE_LIMITED_PATHS:
+            client = request.client.host if request.client else None
+            if not rate_limiter.allow(client):
+                audit(request, "rate_limited", f"path={request.url.path}")
+                return JSONResponse(
+                    {
+                        "detail": (
+                            "Too many checks from this address. "
+                            f"At most {RATE_LIMIT_REQUESTS} per "
+                            f"{RATE_LIMIT_WINDOW_SECONDS} seconds."
+                        )
+                    },
+                    status_code=429,
+                    headers={"Retry-After": str(RATE_LIMIT_WINDOW_SECONDS)},
+                )
+
     return await call_next(request)
+
+
+@app.middleware("http")
+async def request_context(request, call_next):
+    """
+    Give every request an identity and every response its security headers.
+
+    Registered last, so it is the outermost middleware: a request refused by the
+    throttle below still comes back with the headers and the correlation id.
+    """
+    request.state.request_id = uuid4().hex[:12]
+    request.state.budget = RequestBudget()
+
+    response = await call_next(request)
+
+    response.headers["X-Request-ID"] = request.state.request_id
+    response.headers.setdefault("Content-Security-Policy", CONTENT_SECURITY_POLICY)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
+    # Only meaningful over HTTPS, and actively unhelpful when announced over
+    # plaintext, so it follows the same detection as the cookie flag.
+    if secure_cookies(request):
+        response.headers.setdefault("Strict-Transport-Security", HSTS_VALUE)
+    return response
 
 
 def session_directory(session):
@@ -546,18 +1060,46 @@ def session_directory(session):
     return directory
 
 
+def create_session(request):
+    """
+    Return the session of a request, creating it on first stateful use.
+
+    Args:
+        request: Incoming request.
+    return: Session.
+    raises HTTPException: 503 when no session slot can be freed.
+    """
+    session = getattr(request.state, "session", None)
+    if session is not None:
+        return session
+    try:
+        session = store.get_or_create(request.state.session_id)
+    except SessionCapacityError as exc:
+        audit(request, "session_capacity", f"max={MAX_SESSIONS}")
+        raise HTTPException(
+            status_code=503,
+            detail="The service is at capacity. Try again in a few minutes.",
+        ) from exc
+    request.state.session = session
+    return session
+
+
 def get_run(request, run_id):
     """Return a run owned by the requesting session, or raise 404."""
-    run = request.state.session.runs.get(run_id)
+    session = getattr(request.state, "session", None)
+    run = session.runs.get(run_id) if session else None
     if run is None:
+        audit(request, "run_not_found", f"run={safe_upload_name(run_id)}")
         raise HTTPException(status_code=404, detail="Unknown run")
     return run
 
 
 def get_batch(request, batch_id):
     """Return a batch owned by the requesting session, or raise 404."""
-    batch = request.state.session.batches.get(batch_id)
+    session = getattr(request.state, "session", None)
+    batch = session.batches.get(batch_id) if session else None
     if batch is None:
+        audit(request, "batch_not_found", f"batch={safe_upload_name(batch_id)}")
         raise HTTPException(status_code=404, detail="Unknown batch")
     return batch
 
@@ -584,8 +1126,13 @@ def favicon():
 
 @app.get("/api/health")
 def health():
-    """Report that the service is up."""
-    return {"status": "ok", "version": app.version}
+    """
+    Report that the service is up.
+
+    Deliberately says nothing else: the version would tell an unauthenticated
+    caller which advisories apply to this deployment.
+    """
+    return {"status": "ok"}
 
 
 @app.get("/api/thresholds")
@@ -617,7 +1164,6 @@ async def check_scenario(
     sideslip_error: Optional[str] = Form(None),
 ):
     """Check one uploaded scenario and return its structured result."""
-    session = request.state.session
     limits = parse_thresholds(
         {
             "acceleration_warning": acceleration_warning,
@@ -626,6 +1172,8 @@ async def check_scenario(
             "sideslip_error": sideslip_error,
         }
     )
+    session = create_session(request)
+    budget = request_budget(request)
 
     async with session.lock:
         run_id = uuid4().hex
@@ -636,15 +1184,25 @@ async def check_scenario(
         input_directory.mkdir(parents=True, exist_ok=True)
 
         if scenario is not None and scenario.filename:
-            require_suffix(
-                scenario.filename, ALLOWED_SCENARIO_SUFFIXES, "The scenario file"
-            )
+            try:
+                require_suffix(
+                    scenario.filename, ALLOWED_SCENARIO_SUFFIXES, "The scenario file"
+                )
+            except HTTPException:
+                audit(request, "rejected_suffix", "field=scenario")
+                raise
             file_name = safe_upload_name(scenario.filename)
             scenario_path = input_directory / file_name
-            await store_upload(scenario, scenario_path)
+            try:
+                await store_upload(scenario, scenario_path, budget=budget)
+            except HTTPException as exc:
+                if exc.status_code == 413:
+                    audit(request, "upload_too_large", "field=scenario")
+                raise
         elif example:
             source = EXAMPLE_DIRECTORY / safe_upload_name(example)
             if not source.is_file():
+                audit(request, "unknown_example", f"name={safe_upload_name(example)}")
                 raise HTTPException(
                     status_code=404, detail=f"Unknown example '{example}'"
                 )
@@ -657,9 +1215,11 @@ async def check_scenario(
                 detail="Provide a scenario file or the name of an example",
             )
 
-        map_info = await link_map_upload(map, scenario_path, run_directory)
+        map_info = await link_map_upload(
+            map, scenario_path, run_directory, budget=budget
+        )
         checker, plots = await in_worker(
-            _check_scenario, scenario_path, limits, run_directory
+            request, _check_scenario, scenario_path, limits, run_directory
         )
 
         run = Run(
@@ -671,7 +1231,7 @@ async def check_scenario(
             map_info=map_info,
             plots=plots,
         )
-        session.runs[run_id] = run
+        session.add_run(run)
 
     return JSONResponse(run.result(), status_code=201)
 
@@ -686,7 +1246,9 @@ async def get_run_result(request: Request, run_id: str):
     """
     run = get_run(request, run_id)
     if not run.plots:
-        run.plots = await in_worker(_render_plots, run.checker, run.directory / "plots")
+        run.plots = await in_worker(
+            request, _render_plots, run.checker, run.directory / "plots"
+        )
     return run.result()
 
 
@@ -697,6 +1259,7 @@ def get_run_plot(request: Request, run_id: str, plot_name: str):
     filenames = {name: filename for name, _, filename in PLOT_FILES}
     filename = filenames.get(plot_name)
     if filename is None:
+        audit(request, "unknown_plot", f"name={safe_upload_name(plot_name)}")
         raise HTTPException(status_code=404, detail=f"Unknown plot '{plot_name}'")
     path = run.directory / "plots" / filename
     if not path.is_file():
@@ -722,7 +1285,7 @@ def _build_single_report(run, want_pdf):
 async def get_run_pdf(request: Request, run_id: str):
     """Return the PDF report of a run, generating it on first request."""
     run = get_run(request, run_id)
-    path = await in_worker(_build_single_report, run, True)
+    path = await in_worker(request, _build_single_report, run, True)
     if not path.is_file():
         raise HTTPException(
             status_code=500, detail="The PDF report could not be created"
@@ -734,7 +1297,7 @@ async def get_run_pdf(request: Request, run_id: str):
 async def get_run_csv(request: Request, run_id: str):
     """Return the CSV report of a run, generating it on first request."""
     run = get_run(request, run_id)
-    path = await in_worker(_build_single_report, run, False)
+    path = await in_worker(request, _build_single_report, run, False)
     if not path.is_file():
         raise HTTPException(
             status_code=500, detail="The CSV report could not be created"
@@ -742,32 +1305,77 @@ async def get_run_csv(request: Request, run_id: str):
     return FileResponse(path, media_type="text/csv", filename=path.name)
 
 
-def _extract_zip(archive_path, destination):
+def _copy_zip_member(archive, info, target, remaining):
+    """
+    Extract one archive member, stopping the moment it outgrows its budget.
+
+    The declared size in the central directory is chosen by whoever built the
+    archive, so it can only ever be a hint. The limit that matters is on bytes
+    actually written, checked while writing them.
+
+    Args:
+        archive: Open ZipFile.
+        info: ZipInfo of the member to extract.
+        target: Path to write to.
+        remaining: Bytes still allowed across the whole archive.
+    return: Number of bytes written.
+    raises HTTPException: 413 when the member exceeds the remaining budget or
+        expands far beyond its compressed size.
+    """
+    # A member cannot legitimately expand by more than this from its own
+    # compressed size; well beyond it means a bomb, whatever the header claims.
+    ratio_limit = max(info.compress_size, 1) * MAX_ZIP_COMPRESSION_RATIO
+    written = 0
+    with archive.open(info) as source, target.open("wb") as sink:
+        while True:
+            chunk = source.read(ZIP_CHUNK_BYTES)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > remaining or written > ratio_limit:
+                raise HTTPException(
+                    status_code=413,
+                    detail="The archive expands beyond the allowed size",
+                )
+            sink.write(chunk)
+    return written
+
+
+def _extract_zip(archive_path, destination, request=None):
     """
     Extract the scenario and map files from an uploaded archive.
 
     Args:
         archive_path: Path to the uploaded .zip.
         destination: Directory to extract into.
+        request: Optional request, for audit logging of rejections.
     return: Sorted list of extracted .xosc paths.
     raises HTTPException: 400 for malformed archives or limit violations.
     """
     wanted = ALLOWED_SCENARIO_SUFFIXES | {".xodr"}
     try:
         with zipfile.ZipFile(archive_path) as archive:
-            total_bytes = 0
+            declared_bytes = 0
             members = []
             for info in archive.infolist():
                 if info.is_dir() or Path(info.filename).suffix.lower() not in wanted:
                     continue
                 target = confined_path(destination, info.filename)
                 if target is None:
+                    if request is not None:
+                        # A member pointing outside the upload directory is a
+                        # deliberate attack, not a mistake; it is worth alerting on.
+                        audit(request, "zip_path_traversal", "member=<redacted>")
                     raise HTTPException(
                         status_code=400,
                         detail=f"Archive member '{info.filename}' escapes the upload directory",
                     )
-                total_bytes += info.file_size
-                if total_bytes > MAX_ZIP_UNCOMPRESSED_BYTES:
+                # A cheap early reject on the declared sizes. It is a hint, not
+                # the enforcement point - see _copy_zip_member.
+                declared_bytes += info.file_size
+                if declared_bytes > MAX_ZIP_UNCOMPRESSED_BYTES:
+                    if request is not None:
+                        audit(request, "zip_too_large", "stage=declared")
                     raise HTTPException(
                         status_code=413,
                         detail="The archive expands beyond the allowed size",
@@ -780,10 +1388,22 @@ def _extract_zip(archive_path, destination):
                     detail=f"The archive holds more than {MAX_BATCH_FILES} files",
                 )
 
+            written_bytes = 0
             for info, target in members:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                with archive.open(info) as source, target.open("wb") as sink:
-                    shutil.copyfileobj(source, sink)
+                try:
+                    written_bytes += _copy_zip_member(
+                        archive,
+                        info,
+                        target,
+                        MAX_ZIP_UNCOMPRESSED_BYTES - written_bytes,
+                    )
+                except HTTPException:
+                    # Do not leave the partially written member behind.
+                    target.unlink(missing_ok=True)
+                    if request is not None:
+                        audit(request, "zip_too_large", "stage=written")
+                    raise
     except zipfile.BadZipFile as exc:
         raise HTTPException(
             status_code=400, detail="The archive could not be read"
@@ -816,7 +1436,6 @@ async def check_batch(
     sideslip_error: Optional[str] = Form(None),
 ):
     """Check several scenarios and return the aggregated summary table."""
-    session = request.state.session
     limits = parse_thresholds(
         {
             "acceleration_warning": acceleration_warning,
@@ -837,6 +1456,9 @@ async def check_batch(
             detail=f"At most {MAX_BATCH_FILES} files can be checked at once",
         )
 
+    session = create_session(request)
+    budget = request_budget(request)
+
     async with session.lock:
         batch_id = uuid4().hex
         batch_directory = session_directory(session) / batch_id
@@ -848,16 +1470,20 @@ async def check_batch(
             suffix = Path(upload.filename).suffix.lower()
             if suffix == ".zip":
                 archive_path = batch_directory / safe_upload_name(upload.filename)
-                await store_upload(upload, archive_path)
-                scenario_paths.extend(_extract_zip(archive_path, inputs))
+                await store_upload(upload, archive_path, budget=budget)
+                scenario_paths.extend(_extract_zip(archive_path, inputs, request))
             else:
-                require_suffix(
-                    upload.filename,
-                    ALLOWED_SCENARIO_SUFFIXES | {".xodr"},
-                    "Batch files",
-                )
+                try:
+                    require_suffix(
+                        upload.filename,
+                        ALLOWED_SCENARIO_SUFFIXES | {".xodr"},
+                        "Batch files",
+                    )
+                except HTTPException:
+                    audit(request, "rejected_suffix", "field=scenarios")
+                    raise
                 target = inputs / safe_upload_name(upload.filename)
-                await store_upload(upload, target)
+                await store_upload(upload, target, budget=budget)
                 if target.suffix.lower() in ALLOWED_SCENARIO_SUFFIXES:
                     scenario_paths.append(target)
 
@@ -872,7 +1498,7 @@ async def check_batch(
             )
 
         checkers = await in_worker(
-            _check_batch, scenario_paths, limits, batch_directory
+            request, _check_batch, scenario_paths, limits, batch_directory
         )
 
         rows = []
@@ -880,23 +1506,27 @@ async def check_batch(
             run_id = uuid4().hex
             run_directory = batch_directory / "runs" / run_id
             run_directory.mkdir(parents=True, exist_ok=True)
-            session.runs[run_id] = Run(
-                run_id=run_id,
-                session_id=session.session_id,
-                file_name=scenario_path.name,
-                directory=run_directory,
-                checker=checker,
-                map_info={"uploaded": False},
-                plots=[],
+            session.add_run(
+                Run(
+                    run_id=run_id,
+                    session_id=session.session_id,
+                    file_name=scenario_path.name,
+                    directory=run_directory,
+                    checker=checker,
+                    map_info={"uploaded": False},
+                    plots=[],
+                )
             )
             rows.append(summary_row_json(checker, run_id, scenario_path.name))
 
-        session.batches[batch_id] = Batch(
-            batch_id=batch_id,
-            session_id=session.session_id,
-            directory=batch_directory,
-            rows=rows,
-            checkers=list(checkers),
+        session.add_batch(
+            Batch(
+                batch_id=batch_id,
+                session_id=session.session_id,
+                directory=batch_directory,
+                rows=rows,
+                checkers=list(checkers),
+            )
         )
 
     return JSONResponse(
@@ -933,7 +1563,7 @@ def _build_batch_report(batch, want_pdf):
 async def get_batch_pdf(request: Request, batch_id: str):
     """Return the aggregated PDF report of a batch."""
     batch = get_batch(request, batch_id)
-    path = await in_worker(_build_batch_report, batch, True)
+    path = await in_worker(request, _build_batch_report, batch, True)
     if not path.is_file():
         raise HTTPException(
             status_code=500, detail="The aggregated PDF could not be created"
@@ -945,7 +1575,7 @@ async def get_batch_pdf(request: Request, batch_id: str):
 async def get_batch_csv(request: Request, batch_id: str):
     """Return the aggregated CSV report of a batch."""
     batch = get_batch(request, batch_id)
-    path = await in_worker(_build_batch_report, batch, False)
+    path = await in_worker(request, _build_batch_report, batch, False)
     if not path.is_file():
         raise HTTPException(
             status_code=500, detail="The aggregated CSV could not be created"
@@ -953,12 +1583,41 @@ async def get_batch_csv(request: Request, batch_id: str):
     return FileResponse(path, media_type="text/csv", filename=path.name)
 
 
+@app.delete("/api/session")
+def clear_session(request: Request):
+    """
+    Forget everything this browser session uploaded, immediately.
+
+    Waiting out the session TTL is the only alternative, which is not much of
+    an answer for someone who wants their scenario off the server now.
+    """
+    session = getattr(request.state, "session", None)
+    if session is None:
+        return {"cleared": False}
+    store.forget(session.session_id)
+    request.state.session = None
+    response = JSONResponse({"cleared": True})
+    response.delete_cookie(SESSION_COOKIE_NAME, httponly=True, samesite="lax")
+    return response
+
+
 def main():
     """Run the Scenario Quality Checker web application."""
     import uvicorn
 
-    port = _int_from_environment("SQC_PORT", 8001)
-    uvicorn.run("quality_checker.webapp.server:app", host="0.0.0.0", port=port)
+    port = int_from_environment("SQC_PORT", 8001)
+    # Behind a TLS-terminating proxy the request scheme is http on the wire, so
+    # without this the Secure cookie flag would never be set in exactly the
+    # topology the README recommends. Only the listed peers are trusted; set
+    # SQC_FORWARDED_ALLOW_IPS to the proxy's address.
+    forwarded_allow_ips = os.environ.get("SQC_FORWARDED_ALLOW_IPS", "127.0.0.1")
+    uvicorn.run(
+        "quality_checker.webapp.server:app",
+        host="0.0.0.0",
+        port=port,
+        proxy_headers=True,
+        forwarded_allow_ips=forwarded_allow_ips,
+    )
 
 
 if __name__ == "__main__":

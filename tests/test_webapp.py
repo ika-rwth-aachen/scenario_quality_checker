@@ -6,6 +6,8 @@ import shutil
 import time
 import zipfile
 
+import pytest
+
 from conftest import created, upload
 
 
@@ -461,8 +463,29 @@ def test_session_store_stays_bounded():
     """Unbounded traffic must not grow the session registry without limit."""
     from quality_checker.webapp.server import SessionStore
 
-    store = SessionStore(ttl_seconds=3600, max_sessions=5)
+    # No eviction grace: every session is immediately a candidate, which is the
+    # old behaviour and the one that keeps the registry bounded.
+    store = SessionStore(ttl_seconds=3600, max_sessions=5, eviction_grace_seconds=0)
     for index in range(50):
         store.get_or_create(f"{index:032x}")
 
     assert len(store._sessions) <= 5
+
+
+def test_active_sessions_are_not_evicted_by_new_ones():
+    """
+    A burst of new sessions must not throw out the ones people are using.
+
+    Session creation is anonymous and free, so without this the cheapest denial
+    of service available is to open MAX_SESSIONS connections and watch every
+    working directory get deleted.
+    """
+    from quality_checker.webapp.server import SessionCapacityError, SessionStore
+
+    store = SessionStore(ttl_seconds=3600, max_sessions=3, eviction_grace_seconds=60)
+    active = [store.get_or_create(f"{index:032x}") for index in range(3)]
+
+    with pytest.raises(SessionCapacityError):
+        store.get_or_create("f" * 32)
+
+    assert all(session.session_id in store._sessions for session in active)

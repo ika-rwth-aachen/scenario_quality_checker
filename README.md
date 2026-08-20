@@ -1,6 +1,6 @@
 # scenario.quality.checker
 
-<img src="assets/scenario-quality-checker-logo.svg" width="400px" style="margin: 10px;">
+<img src="quality_checker/assets/scenario-quality-checker-logo.svg" width="400px" style="margin: 10px;">
 
 **Find schema, consistency and motion-dynamics problems in ASAM OpenSCENARIO `.xosc` files — from the command line, in the browser, or in CI.**
 
@@ -63,7 +63,7 @@ Check one of the bundled example scenarios and write both reports:
 
 ```bash
 uv run scenario-quality-checker quality_check_single \
-  --file-path example_files/envelope_dynamic_error_1.xosc \
+  --file-path quality_checker/example_files/envelope_dynamic_error_1.xosc \
   --out-path reports/ \
   --out-pdf --out-csv --print-log
 ```
@@ -71,12 +71,12 @@ uv run scenario-quality-checker quality_check_single \
 Output:
 
 ```text
-2026-08-20 12:19:27.183 | INFO | quality_checker.quality_checker:__init__:130 - Starting analysis of example_files/envelope_dynamic_error_1.xosc
+2026-08-20 12:19:27.183 | INFO | quality_checker.quality_checker:__init__:130 - Starting analysis of quality_checker/example_files/envelope_dynamic_error_1.xosc
 2026-08-20 12:19:27.204 | INFO | quality_checker.quality_checker:__init__:137 - XML is loadable
 2026-08-20 12:19:28.594 | INFO | quality_checker.quality_checker:__init__:144 - XSD is valid
 2026-08-20 12:19:30.620 | INFO | quality_checker.quality_checker:create_single_report:1260 - Report created: reports
 2026-08-20 12:19:30.620 | INFO | quality_checker.quality_checker:create_csv:1327 - CSV report created at reports/envelope_dynamic_error_1.xosc.csv
-2026-08-20 12:19:30.620 | INFO | quality_checker.quality_checker:quality_check_single:1398 - Analysis completed for example_files/envelope_dynamic_error_1.xosc.
+2026-08-20 12:19:30.620 | INFO | quality_checker.quality_checker:quality_check_single:1398 - Analysis completed for quality_checker/example_files/envelope_dynamic_error_1.xosc.
 OpenSCENARIO version detected: 1.1
 ```
 
@@ -138,7 +138,7 @@ positive and must not exceed its matching error limit, otherwise the run fails w
 
 ```bash
 uv run scenario-quality-checker quality_check_multiple \
-  --files-path example_files/ \
+  --files-path quality_checker/example_files/ \
   --out-path reports/ \
   --single --aggregated \
   --out-pdf --out-csv
@@ -148,7 +148,7 @@ uv run scenario-quality-checker quality_check_multiple \
 
 ```bash
 uv run scenario-quality-checker quality_check_single \
-  --file-path example_files/envelope_dynamic_error_2.xosc \
+  --file-path quality_checker/example_files/envelope_dynamic_error_2.xosc \
   --out-path reports/ --out-csv \
   --acceleration-warning 2.5 \
   --acceleration-error 4.0
@@ -160,7 +160,7 @@ trajectories feed the dynamics checks and plots:
 
 ```bash
 uv run scenario-quality-checker quality_check_single \
-  --file-path example_files/envelope_scenario_loadable.xosc \
+  --file-path quality_checker/example_files/envelope_scenario_loadable.xosc \
   --out-path reports/ --out-pdf \
   --esmini-path /opt/esmini/bin/esmini
 ```
@@ -181,7 +181,7 @@ uv run scenario-quality-checker quality_check_single \
 Metadata first, then the findings grouped by category. Empty categories mean nothing was found:
 
 ```csv
-scenario_file,example_files/envelope_dynamic_error_1.xosc
+scenario_file,quality_checker/example_files/envelope_dynamic_error_1.xosc
 xml_loadable,True
 xsd_valid,True
 version,1.1
@@ -217,10 +217,10 @@ stage failed:
 
 ```csv
 scenario_file,xml_loadable,xsd_valid,simulation_status,n_file_errors,n_dynamic_errors
-example_files/envelope_xsd_valid_v1-2.xosc,True,True,not done,0,0
-example_files/envelope_file_error_1.xosc,True,True,not done,2,1
-example_files/envelope_xsd_not_valid_1.xosc,True,False,not done,-,-
-example_files/envelope_xml_not_loadable.xosc,False,False,not done,-,-
+quality_checker/example_files/envelope_xsd_valid_v1-2.xosc,True,True,not done,0,0
+quality_checker/example_files/envelope_file_error_1.xosc,True,True,not done,2,1
+quality_checker/example_files/envelope_xsd_not_valid_1.xosc,True,False,not done,-,-
+quality_checker/example_files/envelope_xml_not_loadable.xosc,False,False,not done,-,-
 ```
 
 ### Exit codes
@@ -265,7 +265,7 @@ docker compose -f docker/docker-compose.yml up --build
   PDF/CSV, and a drill-down into any single file.
 - **Thresholds**: override the acceleration and sideslip limits per run without affecting anyone else
   using the same server.
-- **Examples**: check any of the bundled `example_files/` without uploading.
+- **Examples**: check any of the bundled `quality_checker/example_files/` without uploading.
 
 ### HTTP API
 
@@ -280,6 +280,7 @@ docker compose -f docker/docker-compose.yml up --build
 | GET | `/api/runs/{id}/report.pdf` \| `report.csv` | Report for a run |
 | POST | `/api/batches` | Check several scenarios (`scenarios`, optional limits) |
 | GET | `/api/batches/{id}/report.pdf` \| `report.csv` | Aggregated report |
+| DELETE | `/api/session` | Forget this session's uploads and results immediately |
 
 Runs are readable only by the browser session that created them.
 
@@ -296,16 +297,59 @@ $ curl -s localhost:8001/api/thresholds
 | `SQC_MAX_UPLOAD_BYTES` | `20971520` | Per-file upload limit |
 | `SQC_MAX_BATCH_FILES` | `50` | Files accepted in one batch |
 | `SQC_MAX_ZIP_UNCOMPRESSED_BYTES` | `209715200` | Expanded size limit for archives |
+| `SQC_MAX_ZIP_COMPRESSION_RATIO` | `200` | Refuse archive members expanding further than this |
+| `SQC_MAX_REQUEST_BYTES` | `268435456` | Absolute ceiling on one request body |
 | `SQC_SESSION_TTL_SECONDS` | `3600` | How long results stay available |
-| `SQC_MAX_SESSIONS` | `200` | Concurrent sessions kept before evicting the least recently used |
+| `SQC_MAX_SESSIONS` | `200` | Concurrent sessions before the least recently used are evicted |
+| `SQC_SESSION_EVICTION_GRACE_SECONDS` | `120` | A session active this recently is never evicted |
+| `SQC_MAX_RUNS_PER_SESSION` | `100` | Runs kept per session before the oldest are dropped |
+| `SQC_MAX_BATCHES_PER_SESSION` | `10` | Batches kept per session |
 | `SQC_RUN_TIMEOUT_SECONDS` | `120` | Time limit for a single check |
+| `SQC_MAX_QUEUED_CHECKS` | `8` | Checks queued for the worker before new ones get 503 |
+| `SQC_RATE_LIMIT_REQUESTS` | `60` | Checks accepted per address per window (`0` disables) |
+| `SQC_RATE_LIMIT_WINDOW_SECONDS` | `60` | Length of the rate-limit window |
 | `SQC_SECURE_COOKIES` | `auto` | `auto` follows the request scheme; `true`/`false` force it |
+| `SQC_FORWARDED_ALLOW_IPS` | `127.0.0.1` | Proxies whose `X-Forwarded-*` headers are trusted |
+| `SQC_MAX_PARAMETER_SUBSTITUTIONS` | `50000` | Parameter references resolved per scenario |
+| `SQC_MAX_PROCESSED_SCENARIO_BYTES` | `67108864` | Size limit after parameter expansion |
+| `SQC_EXAMPLE_DIR` / `SQC_BRANDING_DIR` | bundled | Override where examples and branding are served from |
 
 The server binds `0.0.0.0`. Checks run on a single worker thread, because the checker and matplotlib
-keep global state. Put the app behind a reverse proxy and run several containers if you need
-throughput. Instances may share the working root (`$TMPDIR/scenario-quality-checker-web`): each
-session owns its own subdirectory, and startup cleanup only removes leftovers older than
+keep global state. Instances may share the working root (`$TMPDIR/scenario-quality-checker-web`):
+each session owns its own subdirectory, and startup cleanup only removes leftovers older than
 `SQC_SESSION_TTL_SECONDS`, so a restart never deletes a sibling instance's uploads.
+
+### Deploying it safely
+
+The application is anonymous by design and accepts files from anyone who can reach it. These are not
+optional extras — the deployment is not sound without them.
+
+- **Session affinity is required across replicas.** Sessions, runs and batches live in the memory of
+  one process. Running several containers behind a round-robin proxy makes users hit an instance
+  that has never heard of their run, so they get sporadic 404s on their own results. Either pin a
+  session to an instance (sticky sessions on the `sqc_session` cookie) or run a single instance.
+- **Terminate TLS and set `SQC_FORWARDED_ALLOW_IPS` to the proxy's address.** Behind a proxy the
+  request arrives over plain HTTP, so without this the server cannot tell that the user is on HTTPS
+  and the session cookie never gets the `Secure` flag. Setting `SQC_SECURE_COOKIES=true` forces the
+  flag on regardless and is the right setting for any HTTPS deployment.
+- **Limit request bodies and rates at the proxy too.** The app enforces its own limits
+  (`SQC_MAX_REQUEST_BYTES`, `SQC_RATE_LIMIT_REQUESTS`, `SQC_MAX_QUEUED_CHECKS`) so that a
+  misconfigured deployment is not wide open, but a proxy sheds that traffic far more cheaply.
+- **Run the container as shipped.** `docker/docker-compose.yml` sets `read_only`, `cap_drop: [ALL]`,
+  `no-new-privileges`, and CPU, memory and PID limits; the image runs as an unprivileged user. The
+  app writes only under `/tmp`, which is a tmpfs.
+
+Two limits are worth knowing precisely, because the names promise more than they deliver:
+
+- `SQC_RUN_TIMEOUT_SECONDS` **bounds the HTTP response, not the work.** A thread in a thread pool
+  cannot be cancelled, so a scenario that never terminates keeps the single worker busy after the
+  client has already received its 504. `SQC_MAX_QUEUED_CHECKS` is what limits the damage: further
+  checks are refused with 503 instead of queueing behind a worker that is not coming back. Killing
+  such a check outright would require running the checker in a separate process.
+- **CSRF protection rests entirely on `SameSite=Lax`.** There is no CSRF token. The exposure is
+  small — a cross-site POST simply arrives without the cookie and creates a fresh, empty session —
+  but anything that loosens `SameSite` or introduces cross-origin use needs an origin check or a
+  token added at the same time.
 
 ## How it works
 
@@ -344,14 +388,14 @@ pytest -q
 ```
 
 CI runs the same suite on Python 3.9 and 3.11 (`.github/workflows/ci.yml`). The code base is
-formatted and linted with [ruff](https://docs.astral.sh/ruff/), which is not part of the `dev`
-extra — install it separately (`pip install ruff` or `uvx ruff`) if you want to run it.
+formatted and linted with [ruff](https://docs.astral.sh/ruff/), which is part of the `dev` extra and
+gated in CI: `ruff check .` and `ruff format --check .` must both pass.
 
 ## Contributing
 
 There is no separate contributing guide yet. Please open an issue for bugs and feature requests, and
 keep pull requests focused: add or update tests under `tests/`, run `pytest -q` (and `ruff check .`)
-before pushing, and add an example `.xosc` to `example_files/` when you add a new kind of check.
+before pushing, and add an example `.xosc` to `quality_checker/example_files/` when you add a new kind of check.
 
 ## License
 
@@ -367,11 +411,11 @@ MIT — see [LICENSE](LICENSE). Third-party licenses are listed in
 
 This package is developed as part of the [SYNERGIES project](https://synergies-ccam.eu).
 
-<img src="assets/synergies.svg" style="width:2in" />
+<img src="quality_checker/assets/synergies.svg" style="width:2in" />
 
 Funded by the European Union. Views and opinions expressed are however those of the author(s) only and do not necessarily reflect those of the European Union or European Climate, Infrastructure and Environment Executive Agency (CINEA). Neither the European Union nor the granting authority can be held responsible for them.
 
-<img src="assets/funded_by_eu.svg" style="width:4in" />
+<img src="quality_checker/assets/funded_by_eu.svg" style="width:4in" />
 
 
 # Notice

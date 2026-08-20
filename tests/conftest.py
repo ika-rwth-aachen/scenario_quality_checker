@@ -5,14 +5,17 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from quality_checker.webapp.server import app
+from quality_checker.webapp.server import app, rate_limiter
 
-EXAMPLES = Path(__file__).resolve().parent.parent / "example_files"
+EXAMPLES = Path(__file__).resolve().parent.parent / "quality_checker" / "example_files"
 
 
 @pytest.fixture
 def client():
     """A test client with the application lifespan running."""
+    # The per-address rate limit is process-wide and every test posts from the
+    # same client address, so each test starts with a clean window.
+    rate_limiter.reset()
     with TestClient(app) as test_client:
         yield test_client
 

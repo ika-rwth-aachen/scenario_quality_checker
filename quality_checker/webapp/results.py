@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import math
 
+from loguru import logger
+
 from ..thresholds import Thresholds
 
 #: Labels for the four entries of FileQualityChecker.file_errors.
@@ -55,9 +57,9 @@ def dynamic_peak(checker, entity_name, metric_name):
     return: (peak_value, peak_time) or None when no trace data is available.
     """
     try:
-        positions, times = checker._get_dynamic_data()[entity_name]
-        dataframe = checker._build_dynamic_data_df(positions, times)
-        dataframe = checker._calculate_acceleration_swimangle(dataframe)
+        dataframe = checker.entity_dynamics(entity_name)
+        if dataframe is None:
+            return None
         values = dataframe[metric_name].abs().dropna()
         if values.empty:
             return None
@@ -67,7 +69,10 @@ def dynamic_peak(checker, entity_name, metric_name):
             None if raw_time is None or math.isnan(raw_time) else float(raw_time)
         )
         return float(values.loc[peak_index]), peak_time
-    except Exception:  # noqa: BLE001 - trace details are a nice-to-have.
+    except Exception as exc:  # noqa: BLE001 - trace details are a nice-to-have.
+        # Logged rather than swallowed: a refactor of the checker would
+        # otherwise degrade the web output with no signal at all.
+        logger.debug(f"No {metric_name} trace for {entity_name}: {exc}")
         return None
 
 
@@ -111,6 +116,10 @@ def collect_findings(checker):
     """
     thresholds = getattr(checker, "thresholds", None) or Thresholds.default()
     findings = []
+
+    xml_error = getattr(checker, "xml_error", None)
+    if xml_error:
+        findings.append(_finding("error", "xml", str(xml_error)))
 
     for entry in getattr(checker, "xsd_errors", None) or []:
         findings.append(_finding("error", "xsd", str(entry)))
@@ -164,14 +173,16 @@ def _optional_int(value):
     return value if isinstance(value, int) else None
 
 
-def summary_row_json(checker, run_id=None, file_name=None):
+def summary_row_json(checker, run_id, file_name):
     """
     Return one aggregated-table row as JSON-safe values.
 
     Args:
         checker: FileQualityChecker instance.
         run_id: Identifier used to fetch the detailed result.
-        file_name: Display name of the scenario file.
+        file_name: Display name of the scenario file. Required: falling back to
+            checker.file_path would put a server-side temporary path in a
+            response body.
     return: Dict with the columns of the aggregated report.
     """
     _, xml_loadable, xsd_valid, simulation_status, n_file_errors, n_dynamic_errors = (
@@ -180,7 +191,7 @@ def summary_row_json(checker, run_id=None, file_name=None):
     findings = collect_findings(checker)
     return {
         "run_id": run_id,
-        "file_name": file_name or str(getattr(checker, "file_path", "")),
+        "file_name": file_name,
         "xml_loadable": bool(xml_loadable),
         "xsd_valid": bool(xsd_valid),
         "simulation_status": simulation_status,

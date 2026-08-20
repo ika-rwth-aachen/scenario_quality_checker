@@ -11,15 +11,29 @@ services:
       SQC_MAX_UPLOAD_BYTES: ${SQC_MAX_UPLOAD_BYTES:-20971520}
       SQC_MAX_BATCH_FILES: ${SQC_MAX_BATCH_FILES:-50}
       SQC_MAX_ZIP_UNCOMPRESSED_BYTES: ${SQC_MAX_ZIP_UNCOMPRESSED_BYTES:-209715200}
+      SQC_MAX_REQUEST_BYTES: ${SQC_MAX_REQUEST_BYTES:-268435456}
       SQC_SESSION_TTL_SECONDS: ${SQC_SESSION_TTL_SECONDS:-3600}
       SQC_MAX_SESSIONS: ${SQC_MAX_SESSIONS:-200}
+      SQC_MAX_RUNS_PER_SESSION: ${SQC_MAX_RUNS_PER_SESSION:-100}
       SQC_RUN_TIMEOUT_SECONDS: ${SQC_RUN_TIMEOUT_SECONDS:-120}
+      SQC_MAX_QUEUED_CHECKS: ${SQC_MAX_QUEUED_CHECKS:-8}
+      SQC_RATE_LIMIT_REQUESTS: ${SQC_RATE_LIMIT_REQUESTS:-60}
+      SQC_RATE_LIMIT_WINDOW_SECONDS: ${SQC_RATE_LIMIT_WINDOW_SECONDS:-60}
+      # Behind a TLS-terminating proxy set this to true (and point
+      # SQC_FORWARDED_ALLOW_IPS at the proxy) so the session cookie is Secure.
       SQC_SECURE_COOKIES: ${SQC_SECURE_COOKIES:-auto}
+      SQC_FORWARDED_ALLOW_IPS: ${SQC_FORWARDED_ALLOW_IPS:-127.0.0.1}
       HOME: /tmp/scenario-quality-checker
     # Uploaded scenarios and rendered reports live under the system temp
-    # directory, so nothing has to be persisted between runs.
+    # directory, so nothing has to be persisted between runs - and nothing
+    # outside that directory ever needs to be writable.
+    read_only: true
     tmpfs:
       - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     cpus: 2.0
     mem_limit: 2g
     pids_limit: 256

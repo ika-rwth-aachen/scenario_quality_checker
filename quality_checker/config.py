@@ -1,4 +1,24 @@
+import os
+
 import matplotlib as mpl
+
+
+def int_from_environment(name, default):
+    """
+    Read a positive integer setting from the environment.
+
+    Args:
+        name: Environment variable to read.
+        default: Value used when the variable is unset, unparsable, or not
+            positive. Rejecting non-positive values keeps a typo from silently
+            disabling a limit.
+    return: int.
+    """
+    try:
+        value = int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
 
 
 class Config:

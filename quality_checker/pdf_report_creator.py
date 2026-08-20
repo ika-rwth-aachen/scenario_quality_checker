@@ -1,5 +1,4 @@
 import tempfile
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import matplotlib as mpl
@@ -8,6 +7,7 @@ import numpy as np
 from loguru import logger
 from matplotlib.lines import Line2D
 
+from . import safe_xml
 from .config import Config
 from .pdf import *
 from .thresholds import Thresholds
@@ -659,7 +659,6 @@ def create_report_single(checker, title, out_path):
                 for err in xsd_errors:
                     full_text = " - " + str(err)
                     text = full_text
-                    first_line = True
                     while len(text) > max_len:
                         line = text[:max_len]
                         pdf.create_textbox(
@@ -670,7 +669,6 @@ def create_report_single(checker, title, out_path):
                         )
                         # Indent continuation lines slightly.
                         text = "   " + text[max_len:]
-                        first_line = False
                     # Remainder (or whole text if shorter than max_len).
                     pdf.create_textbox(
                         text,
@@ -1160,7 +1158,7 @@ def plot_vehicle_paths(
 
     if xodr_path is not None:
         try:
-            tree = ET.parse(xodr_path)
+            tree = safe_xml.parse(xodr_path)
             root = tree.getroot()
 
             def _sample_geometry_points(geom, points_per_meter=10.0):

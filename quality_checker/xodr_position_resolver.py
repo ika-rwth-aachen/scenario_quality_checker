@@ -1,5 +1,6 @@
 import math
-import xml.etree.ElementTree as ET
+
+from . import safe_xml
 
 
 class OpenDrivePositionResolver:
@@ -64,7 +65,7 @@ class OpenDrivePositionResolver:
             return self._xodr_cache[cache_key]
 
         try:
-            tree = ET.parse(xodr_path)
+            tree = safe_xml.parse(xodr_path)
             root = tree.getroot()
         except Exception:
             self._xodr_cache[cache_key] = None

@@ -65,8 +65,8 @@ def test_schema_errors_are_reported_as_errors(example, tmp_path):
     assert all(f["category"] == "xsd" for f in result["findings"])
 
 
-def test_unloadable_xml_serializes_without_findings(example, tmp_path):
-    """A file that is not XML must serialize cleanly rather than raise."""
+def test_unloadable_xml_reports_why(example, tmp_path):
+    """A file that is not XML serializes cleanly and says what was wrong."""
     checker = check(example, "envelope_xml_not_loadable.xosc", tmp_path)
 
     result = serialize_checker(checker, "run", "envelope_xml_not_loadable.xosc")
@@ -77,7 +77,11 @@ def test_unloadable_xml_serializes_without_findings(example, tmp_path):
         "scenario_parsed": False,
         "simulation_status": "not done",
     }
-    assert result["counts"] == {"errors": 0, "warnings": 0}
+    assert result["counts"] == {"errors": 1, "warnings": 0}
+    assert result["findings"][0]["category"] == "xml"
+    assert "not well-formed" in result["findings"][0]["message"]
+    # The reason must locate the problem without naming the server-side file.
+    assert str(tmp_path) not in result["findings"][0]["message"]
     assert result["metadata"]["road_users"] == {"total": 0, "by_type": {}}
 
 
