@@ -40,19 +40,28 @@ At a high level, the checker:
 - Web interface: findings, plots and reports in the browser (see below)
 
 ## Installation
-Install Python 3.9+ (Conda recommended) and the dependencies.
+Dependencies are managed with [uv](https://docs.astral.sh/uv/getting-started/installation/). Install uv, then sync the environment (this creates `.venv` and installs the locked dependencies):
 
 ```bash
-conda create -n sqc python=3.9
-conda activate sqc
-pip install -r requirements.txt
+uv sync
 ```
+
+To also install the web interface extras:
+
+```bash
+uv sync --extra web
+```
+
+All commands below are run through `uv run`, which uses the `.venv` created by
+`uv sync` without requiring it to be activated. If you prefer an activated
+environment, use `source .venv/bin/activate` (`.venv\Scripts\activate` on
+Windows) and drop the `uv run` prefix.
 
 ## Quick start
 Single file with PDF and CSV:
 
 ```bash
-python -m quality_checker quality_check_single \
+uv run python -m quality_checker quality_check_single \
   --file-path example_files/envelope_dynamic_error_1.xosc \
   --out-path reports/ \
   --schema-path quality_checker/schemas/ \
@@ -63,7 +72,7 @@ python -m quality_checker quality_check_single \
 Multiple files with per-file and aggregated outputs:
 
 ```bash
-python -m quality_checker quality_check_multiple \
+uv run python -m quality_checker quality_check_multiple \
   --files-path example_files/ \
   --out-path reports/ \
   --schema-path quality_checker/schemas/ \
@@ -74,7 +83,7 @@ python -m quality_checker quality_check_multiple \
 ```
 
 ## Command reference
-The CLI is implemented with Typer and is invoked via `python -m quality_checker`.
+The CLI is implemented with Typer and is invoked via `uv run python -m quality_checker`.
 
 ### `quality_check_single`
 Checks one `.xosc` file and optionally creates reports.
@@ -124,8 +133,8 @@ scenario data is persisted — every upload lives in a per-session temporary
 directory that is removed once the session expires.
 
 ```bash
-pip install ".[web]"
-python -m quality_checker.webapp.server
+uv sync --extra web
+uv run python -m quality_checker.webapp.server
 ```
 
 Then open http://localhost:8001. Set `SQC_PORT` to serve a different port.
