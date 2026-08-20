@@ -42,7 +42,7 @@ scenario-quality-checker = "quality_checker.__main__:app"
 scenario-quality-checker-web = "quality_checker.webapp.server:main"
 
 [project.urls]
-Repository = "https://github.com/ika-rwth-aachen/scenario-quality-checker"
+Repository = "https://github.com/ika-rwth-aachen/scenario_quality_checker"
 
 [tool.setuptools.packages.find]
 where = ["."]
