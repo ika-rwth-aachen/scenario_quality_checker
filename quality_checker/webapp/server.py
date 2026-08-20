@@ -576,7 +576,7 @@ def index():
 @app.get("/favicon.ico")
 def favicon():
     """Serve the project icon when the repository assets are available."""
-    icon = BRANDING_DIRECTORY / "scenario_quality_checker.png"
+    icon = BRANDING_DIRECTORY / "scenario-quality-checker-logo.svg"
     if not icon.is_file():
         return Response(status_code=404)
     return FileResponse(icon)

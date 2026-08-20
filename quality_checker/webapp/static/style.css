@@ -3,6 +3,9 @@
   --ink: #13283f;
   --muted: #617386;
   --line: #d9e5ee;
+  /* Borders that are the only visual boundary of a control need >=3:1 against
+     both --panel and --paper; --line is decorative only and stays as it was. */
+  --line-strong: #6f8698;
   --paper: #f4f8fb;
   --panel: #ffffff;
   --accent: #fea801;
@@ -10,6 +13,7 @@
   --navy: #28627d;
   --error: #9a261d;
   --warning: #8a6716;
+  --focus: var(--navy);
 }
 * {
   box-sizing: border-box;
@@ -25,21 +29,64 @@ body {
   background: var(--paper);
   color: var(--ink);
   font-family: Helvetica, Arial, sans-serif;
-  font-size: 13px;
+  /* rem throughout, so the browser's own font-size setting is honoured. */
+  font-size: 0.9375rem;
+  line-height: 1.45;
+}
+
+/*
+ * One focus rule for everything. The 2px offset places the ring outside the
+ * control, on the panel background, so it stays visible on the dark #submit
+ * button too. Nothing in this file sets outline: none.
+ */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The form column is long, so keyboard users get a way past it. */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -60px;
+  z-index: 10;
+  border-radius: 0 0 8px 8px;
+  background: var(--panel);
+  color: var(--navy);
+  padding: 10px 14px;
+  font-weight: 700;
+  transition: top 0.15s ease-out;
+}
+.skip-link:focus {
+  top: 0;
 }
 
 /* Header with the tool identity, the two modes and the status line. */
 header {
-  height: 62px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 22px;
-  padding: 0 22px;
+  gap: 0.5rem 1.4rem;
+  min-height: 62px;
+  padding: 0.6rem 1.4rem;
   border-bottom: 1px solid var(--line);
   background: #dcecf5;
 }
 .brand {
-  font: 700 17px Helvetica, Arial, sans-serif;
+  margin: 0;
+  font: 700 1.0625rem Helvetica, Arial, sans-serif;
 }
 .tabs {
   display: flex;
@@ -66,7 +113,7 @@ button.tab.active {
 .status.loading::before {
   width: 12px;
   height: 12px;
-  border: 2px solid #2f829f55;
+  border: 2px solid #2f829f;
   border-top-color: var(--accent);
   border-radius: 50%;
   content: "";
@@ -77,16 +124,36 @@ button.tab.active {
     transform: rotate(360deg);
   }
 }
+@media (prefers-reduced-motion: reduce) {
+  .status.loading::before {
+    border-top-color: #2f829f;
+    animation: none;
+  }
+  .skip-link {
+    transition: none;
+  }
+}
+/* At the narrowest widths the header stacks rather than overflowing. */
+@media (max-width: 520px) {
+  header {
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.6rem 0.75rem;
+  }
+  .status {
+    margin-left: 0;
+  }
+}
 
 /* Two-column shell: the form on the left, results on the right. */
 main {
   display: grid;
-  grid-template-columns: 330px minmax(420px, 1fr);
+  grid-template-columns: 22rem minmax(26rem, 1fr);
   gap: 12px;
   padding: 12px;
   align-items: start;
 }
-@media (max-width: 860px) {
+@media (max-width: 900px) {
   main {
     grid-template-columns: 1fr;
   }
@@ -106,8 +173,14 @@ main {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin: 0 0 12px;
+  font-size: 1rem;
   font-weight: 700;
+}
+.panel-title h2 {
+  margin: 0;
+  font-size: inherit;
+  overflow-wrap: anywhere;
 }
 .result-actions {
   display: flex;
@@ -117,8 +190,16 @@ main {
 .filter {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  /* Target Size (Minimum): the whole label is the target, not just the box. */
+  min-height: 24px;
+  padding: 2px 4px;
   color: var(--muted);
+}
+.filter input[type="checkbox"] {
+  width: 1.15rem;
+  height: 1.15rem;
+  margin: 0;
 }
 
 /* Form controls. */
@@ -151,6 +232,7 @@ button.remove {
   flex: none;
   background: transparent;
   color: var(--navy);
+  min-height: 24px;
   padding: 6px 8px;
   text-decoration: underline;
 }
@@ -159,7 +241,7 @@ button.remove:hover {
 }
 .field.inline {
   display: grid;
-  grid-template-columns: 1fr 88px;
+  grid-template-columns: 1fr 6rem;
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
@@ -172,30 +254,44 @@ input[type="file"],
 input[type="number"],
 select {
   width: 100%;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
   background: var(--paper);
   color: var(--ink);
   padding: 7px;
   font: inherit;
 }
-/* The example dropdown is disabled while an uploaded file takes precedence.
-   The browser default is too faint against our own input background. */
-select:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
-}
-.field:has(select:disabled) > label {
+/*
+ * The example dropdown is outranked by an uploaded file, but stays enabled:
+ * a disabled control leaves the tab order and the accessibility tree, taking
+ * the explanation in #example-hint with it.
+ */
+select.inert-choice {
+  border-style: dashed;
   color: var(--muted);
 }
 .thresholds {
   margin-bottom: 14px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
   padding: 10px;
 }
 .thresholds summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  padding: 4px 0;
   cursor: pointer;
+  font-weight: 600;
+}
+/* Says that a collapsed panel is quietly changing the result of a check. */
+.summary-badge {
+  border-radius: 999px;
+  background: #f8f0dc;
+  color: var(--warning);
+  padding: 2px 9px;
+  font-size: 0.8125rem;
   font-weight: 600;
 }
 .thresholds > .field {
@@ -209,10 +305,11 @@ button {
   border-radius: 8px;
   background: var(--forest);
   color: #012a7a;
+  min-height: 24px;
   padding: 10px 12px;
   cursor: pointer;
   line-height: 1.2;
-  font: 600 12px Helvetica, Arial, sans-serif;
+  font: 600 0.875rem Helvetica, Arial, sans-serif;
 }
 button:disabled {
   opacity: 0.55;
@@ -235,6 +332,9 @@ button.secondary {
   background: #f7e7e5;
   color: var(--error);
   padding: 10px;
+}
+[aria-invalid="true"] {
+  border-color: var(--error);
 }
 .placeholder {
   color: var(--muted);
@@ -286,7 +386,7 @@ button.secondary {
 }
 h3 {
   margin: 18px 0 8px;
-  font-size: 13px;
+  font-size: 0.9375rem;
 }
 .findings {
   margin: 0;
@@ -297,7 +397,7 @@ h3 {
   display: grid;
   gap: 2px;
   margin-bottom: 6px;
-  border-left: 3px solid var(--line);
+  border-left: 3px solid var(--line-strong);
   padding: 8px 10px;
   background: var(--paper);
   border-radius: 0 8px 8px 0;
@@ -319,11 +419,16 @@ h3 {
 }
 .finding-detail {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 0.875rem;
+}
+/* The text equivalent of the charts below it. */
+.plots-summary {
+  margin: 0 0 12px;
+  color: var(--muted);
 }
 .plots {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 12px;
 }
 .plot figure {
@@ -331,7 +436,7 @@ h3 {
 }
 .plot img {
   width: 100%;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
   background: var(--panel);
 }
@@ -356,19 +461,27 @@ table {
 }
 th,
 td {
-  border-bottom: 1px solid var(--line);
+  border-bottom: 1px solid var(--line-strong);
   padding: 7px 9px;
   text-align: left;
   white-space: nowrap;
 }
 th {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 0.875rem;
 }
-tbody tr {
-  cursor: pointer;
+/* The file name is a button, so the row is not itself a click target. */
+button.row-open {
+  background: transparent;
+  color: var(--navy);
+  padding: 4px 0;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  text-decoration: underline;
 }
-tbody tr:hover {
+tbody tr:hover,
+tbody tr:focus-within {
   background: #e8f1f5;
 }
 td.count-error {
@@ -381,4 +494,29 @@ td.count-warning {
 }
 .back-link {
   margin-bottom: 12px;
+}
+
+/*
+ * Windows High Contrast flattens every background colour, which would erase
+ * the badge and finding severities. They keep a border so the distinction
+ * survives as shape rather than colour.
+ */
+@media (forced-colors: active) {
+  .badge {
+    border: 1px solid CanvasText;
+  }
+  .finding {
+    border: 1px solid CanvasText;
+    border-left-width: 4px;
+  }
+  button.tab.active {
+    border: 2px solid Highlight;
+  }
+  .status.loading::before {
+    border-color: CanvasText;
+    border-top-color: Highlight;
+  }
+  :focus-visible {
+    outline-color: Highlight;
+  }
 }

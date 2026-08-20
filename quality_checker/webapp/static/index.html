@@ -1,24 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>scenario quality checker</title>
-<link rel="icon" href="/branding/scenario_quality_checker.png">
+<link rel="icon" href="/branding/scenario-quality-checker-logo.svg">
 <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+
+<a class="skip-link" href="#result">Skip to results</a>
 
 <header>
-  <span class="brand">scenario.quality.checker</span>
-  <span class="tabs">
-    <button id="tab-single" class="tab active" type="button">Single scenario</button>
-    <button id="tab-batch" class="tab" type="button">Batch</button>
-  </span>
-  <span id="status" class="status"></span>
+  <h1 class="brand">scenario.quality.checker</h1>
+  <div class="tabs" role="tablist" aria-label="Check mode">
+    <button id="tab-single" class="tab active" type="button"
+            role="tab" aria-selected="true" aria-controls="single-inputs">Single scenario</button>
+    <button id="tab-batch" class="tab" type="button"
+            role="tab" aria-selected="false" aria-controls="batch-inputs" tabindex="-1">Batch</button>
+  </div>
+  <span id="status" class="status" role="status"></span>
 </header>
 
 <main>
-  <section class="panel form-panel">
-    <div class="panel-title">Check a scenario</div>
+  <section class="panel form-panel" aria-labelledby="form-title">
+    <h2 class="panel-title" id="form-title">Check a scenario</h2>
 
     <form id="check-form">
-      <div id="single-inputs">
+      <div id="single-inputs" role="tabpanel" aria-labelledby="tab-single" tabindex="0">
         <div class="field">
           <label for="scenario-input">OpenSCENARIO file (.xosc)</label>
           <div class="file-row">
@@ -30,34 +39,34 @@
         <div class="field">
           <label for="map-input">OpenDRIVE map (.xodr, optional)</label>
           <div class="file-row">
-            <input id="map-input" type="file" accept=".xodr,.xml">
+            <input id="map-input" type="file" accept=".xodr,.xml" aria-describedby="map-hint">
             <button id="map-remove" type="button" class="remove" hidden>Remove</button>
           </div>
-          <small>Needed to resolve lane positions and draw the road network.</small>
+          <small id="map-hint">Needed to resolve lane positions and draw the road network.</small>
         </div>
 
         <div class="field">
           <label for="example-input">&hellip; or pick a bundled example</label>
-          <select id="example-input">
+          <select id="example-input" aria-describedby="example-hint">
             <option value="">None</option>
           </select>
-          <small id="example-hint" hidden>The uploaded file will be checked instead of an example.</small>
+          <small id="example-hint">Used when no OpenSCENARIO file is uploaded.</small>
         </div>
       </div>
 
-      <div id="batch-inputs" hidden>
+      <div id="batch-inputs" role="tabpanel" aria-labelledby="tab-batch" tabindex="0" hidden>
         <div class="field">
           <label for="batch-input">Scenario files or a .zip archive</label>
           <div class="file-row">
-            <input id="batch-input" type="file" accept=".xosc,.xodr,.zip" multiple>
+            <input id="batch-input" type="file" accept=".xosc,.xodr,.zip" multiple aria-describedby="batch-hint">
             <button id="batch-remove" type="button" class="remove" hidden>Remove</button>
           </div>
-          <small>Every .xosc in the selection is checked and summarized in one table.</small>
+          <small id="batch-hint">Every .xosc in the selection is checked and summarized in one table.</small>
         </div>
       </div>
 
       <details class="thresholds">
-        <summary>Thresholds</summary>
+        <summary>Thresholds<span id="thresholds-badge" class="summary-badge" hidden></span></summary>
         <label class="field inline">
           <span>Acceleration warning [m/s&sup2;]</span>
           <input id="acceleration-warning" type="number" step="any" min="0">
@@ -80,12 +89,12 @@
       <button id="submit" type="submit">Check quality</button>
     </form>
 
-    <p id="error" class="error" hidden></p>
+    <p id="error" class="error" role="alert" hidden></p>
   </section>
 
-  <section class="panel result-panel">
+  <section class="panel result-panel" aria-labelledby="result-title">
     <div class="panel-title">
-      <span id="result-title">Result</span>
+      <h2 id="result-title" tabindex="-1">Result</h2>
       <span class="result-actions" id="result-actions" hidden>
         <label class="filter"><input id="show-errors" type="checkbox" checked> Errors</label>
         <label class="filter"><input id="show-warnings" type="checkbox" checked> Warnings</label>
@@ -100,3 +109,5 @@
 <script src="/assets/app.js"></script>
 <script src="/assets/render-single.js"></script>
 <script src="/assets/render-batch.js"></script>
+</body>
+</html>

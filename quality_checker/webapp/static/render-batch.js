@@ -11,7 +11,7 @@ const BATCH_COLUMNS = [
 ];
 
 function formatCount(value) {
-  return value === null || value === undefined ? "—" : value;
+  return value === null || value === undefined ? NO_VALUE : value;
 }
 
 /** Open one file of the batch in the detailed single view. */
@@ -24,12 +24,16 @@ async function openBatchRow(row) {
       const back = element("div", "back-link");
       const button = element("button", "secondary", "← Back to the batch summary");
       button.type = "button";
-      button.onclick = () => renderBatch(state.batch);
+      button.onclick = () => {
+        renderBatch(state.batch);
+        focusResult();
+      };
       back.appendChild(button);
       return back;
     };
     renderSingle(result, state.backLink());
-    setStatus("");
+    setStatus(`${result.file_name}: ${result.counts.errors} problems, ${result.counts.warnings} warnings.`);
+    focusResult();
   } catch (error) {
     setError(error.message);
     setStatus("");
@@ -43,6 +47,7 @@ function renderBatch(batch) {
   state.backLink = null;
 
   $("#result-title").textContent = `Batch of ${batch.files.length} scenarios`;
+  setDocumentTitle(`Batch of ${batch.files.length}`);
   $("#result-actions").hidden = true;
 
   const target = $("#result");
@@ -53,13 +58,20 @@ function renderBatch(batch) {
     { errors: 0, warnings: 0 }
   );
   target.appendChild(countBadges(totals));
-  target.appendChild(element("p", "placeholder", "Select a row to see its findings and plots."));
+  target.appendChild(element("p", "placeholder", "Select a file name to see its findings and plots."));
 
   const scroll = element("div", "table-scroll");
   const table = element("table");
+  table.appendChild(
+    element("caption", "visually-hidden", "Checked scenarios. Select a file name to open its findings.")
+  );
   const head = element("thead");
   const headRow = element("tr");
-  BATCH_COLUMNS.forEach(([label]) => headRow.appendChild(element("th", null, label)));
+  BATCH_COLUMNS.forEach(([label]) => {
+    const cell = element("th", null, label);
+    cell.scope = "col";
+    headRow.appendChild(cell);
+  });
   head.appendChild(headRow);
   table.appendChild(head);
 
@@ -67,12 +79,22 @@ function renderBatch(batch) {
   batch.files.forEach((row) => {
     const tableRow = element("tr");
     BATCH_COLUMNS.forEach(([label, accessor]) => {
-      const cell = element("td", null, String(accessor(row)));
+      const cell = element("td");
+      if (label === "Scenario file") {
+        /* A real button rather than a click handler on the <tr>: it is
+           reachable by Tab, operable with Enter and Space, gets a focus ring
+           and announces itself -- none of which a clickable row does. */
+        const open = element("button", "row-open", String(accessor(row)));
+        open.type = "button";
+        open.onclick = () => openBatchRow(row);
+        cell.appendChild(open);
+      } else {
+        cell.textContent = String(accessor(row));
+      }
       if (label === "Problems" && row.n_errors) cell.className = "count-error";
       if (label === "Warnings" && row.n_warnings) cell.className = "count-warning";
       tableRow.appendChild(cell);
     });
-    tableRow.onclick = () => openBatchRow(row);
     body.appendChild(tableRow);
   });
   table.appendChild(body);

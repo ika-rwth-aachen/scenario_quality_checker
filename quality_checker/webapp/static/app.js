@@ -37,6 +37,9 @@ async function downloadResponse(response, filename) {
   URL.revokeObjectURL(url);
 }
 
+/* #status is role="status" and #error is role="alert", so writing to them is
+   what announces progress and failures to a screen reader. */
+
 function setStatus(text, loading = false) {
   const status = $("#status");
   status.textContent = text;
@@ -47,6 +50,14 @@ function setError(message) {
   const element = $("#error");
   element.textContent = message || "";
   element.hidden = !message;
+  if (!message) clearInvalid();
+}
+
+const PAGE_TITLE = "scenario quality checker";
+
+/** Keep the tab title in sync with what the result panel shows. */
+function setDocumentTitle(subject) {
+  document.title = subject ? `${subject} · ${PAGE_TITLE}` : PAGE_TITLE;
 }
 
 /** Build an element with optional class, text and children. */
@@ -57,25 +68,73 @@ function element(tag, className, text) {
   return node;
 }
 
+/** Em dash for "no value", used by every formatter so they agree. */
+const NO_VALUE = "—";
+
 function formatNumber(value, digits = 3) {
-  if (value === null || value === undefined) return "-";
+  if (value === null || value === undefined) return NO_VALUE;
   return Number(value).toPrecision(digits).replace(/\.?0+$/, "") || String(value);
+}
+
+/** Reset the result panel to its initial empty state. */
+function clearResult(titleText = "Result") {
+  state.result = null;
+  state.batch = null;
+  state.backLink = null;
+  $("#result-title").textContent = titleText;
+  $("#result-actions").hidden = true;
+  $("#result").replaceChildren(
+    element("p", "placeholder", "Upload an OpenSCENARIO file to see its findings, dynamics plots and reports.")
+  );
+  setDocumentTitle(null);
+}
+
+/*
+ * A fresh result replaces the panel wholesale, so keyboard and screen reader
+ * users are moved to its heading rather than left on the submit button.
+ */
+function focusResult() {
+  $("#result-title").focus();
 }
 
 /* --- Mode switching --------------------------------------------------- */
 
-function setMode(mode) {
+const TABS = ["#tab-single", "#tab-batch"];
+const MODES = ["single", "batch"];
+
+function setMode(mode, moveFocus = false) {
   state.mode = mode;
-  $("#tab-single").classList.toggle("active", mode === "single");
-  $("#tab-batch").classList.toggle("active", mode === "batch");
+  MODES.forEach((name, index) => {
+    const tab = $(TABS[index]);
+    const selected = name === mode;
+    tab.classList.toggle("active", selected);
+    tab.setAttribute("aria-selected", String(selected));
+    // Roving tabindex: only the selected tab is a Tab stop, arrows do the rest.
+    tab.tabIndex = selected ? 0 : -1;
+    if (selected && moveFocus) tab.focus();
+  });
   $("#single-inputs").hidden = mode !== "single";
   $("#batch-inputs").hidden = mode !== "batch";
   $("#submit").textContent = mode === "single" ? "Check quality" : "Check all files";
   setError("");
 }
 
-$("#tab-single").onclick = () => setMode("single");
-$("#tab-batch").onclick = () => setMode("batch");
+TABS.forEach((selector, index) => {
+  $(selector).addEventListener("click", () => setMode(MODES[index]));
+});
+
+/* Arrow/Home/End navigation, as expected of a role="tablist". */
+$('[role="tablist"]').addEventListener("keydown", (event) => {
+  const current = MODES.indexOf(state.mode);
+  let next = null;
+  if (event.key === "ArrowRight") next = (current + 1) % MODES.length;
+  else if (event.key === "ArrowLeft") next = (current - 1 + MODES.length) % MODES.length;
+  else if (event.key === "Home") next = 0;
+  else if (event.key === "End") next = MODES.length - 1;
+  if (next === null) return;
+  event.preventDefault();
+  setMode(MODES[next], true);
+});
 
 /* --- Thresholds ------------------------------------------------------- */
 
@@ -86,28 +145,76 @@ const THRESHOLD_FIELDS = {
   sideslip_error: "#sideslip-error",
 };
 
+const THRESHOLD_STORAGE_KEY = "sqc.thresholds";
+
 function applyThresholds(values) {
   Object.entries(THRESHOLD_FIELDS).forEach(([name, selector]) => {
     $(selector).value = values[name];
   });
+  syncThresholdBadge();
+  saveThresholds();
+}
+
+/** Names of the thresholds the user has moved away from the server defaults. */
+function changedThresholds() {
+  return Object.entries(THRESHOLD_FIELDS).filter(([name, selector]) => {
+    const value = $(selector).value;
+    return value !== "" && Number(value) !== state.defaults[name];
+  });
+}
+
+/* The <details> is collapsed by default, so a modified threshold would
+   otherwise silently change the outcome of a check. */
+function syncThresholdBadge() {
+  const badge = $("#thresholds-badge");
+  if (!state.defaults) {
+    badge.hidden = true;
+    return;
+  }
+  const count = changedThresholds().length;
+  badge.textContent = count ? `${count} modified` : "";
+  badge.hidden = count === 0;
 }
 
 /** Only send thresholds the user actually changed. */
 function thresholdFormData(data) {
+  changedThresholds().forEach(([name, selector]) => data.append(name, $(selector).value));
+}
+
+function saveThresholds() {
+  const values = {};
   Object.entries(THRESHOLD_FIELDS).forEach(([name, selector]) => {
-    const value = $(selector).value;
-    if (value !== "" && Number(value) !== state.defaults[name]) {
-      data.append(name, value);
-    }
+    values[name] = $(selector).value;
   });
+  try {
+    localStorage.setItem(THRESHOLD_STORAGE_KEY, JSON.stringify(values));
+  } catch (error) {
+    /* Private browsing or a full quota: thresholds simply do not persist. */
+  }
+}
+
+function storedThresholds() {
+  try {
+    return JSON.parse(localStorage.getItem(THRESHOLD_STORAGE_KEY) || "null");
+  } catch (error) {
+    return null;
+  }
 }
 
 $("#reset-thresholds").onclick = () => applyThresholds(state.defaults);
 
+Object.values(THRESHOLD_FIELDS).forEach((selector) => {
+  $(selector).addEventListener("input", () => {
+    syncThresholdBadge();
+    saveThresholds();
+  });
+});
+
 async function loadThresholds() {
   const payload = await api("/api/thresholds");
   state.defaults = payload.defaults;
-  applyThresholds(payload.defaults);
+  // A stored set wins, so a reload keeps whatever the user last worked with.
+  applyThresholds({ ...payload.defaults, ...(storedThresholds() || {}) });
 }
 
 async function loadExamples() {
@@ -132,12 +239,17 @@ const FILE_INPUTS = [
   ["#batch-input", "#batch-remove"],
 ];
 
-/** An uploaded scenario wins over the example, so show that the list is inert. */
+/*
+ * An uploaded scenario wins over the example. The select stays enabled rather
+ * than disabled: a disabled control drops out of the accessibility tree and
+ * out of the tab order, so its explanation would never be reachable.
+ */
 function syncExampleAvailability() {
   const hasScenario = $("#scenario-input").files.length > 0;
-  // A disabled select keeps its value, so removing the file restores the choice.
-  $("#example-input").disabled = hasScenario;
-  $("#example-hint").hidden = !hasScenario;
+  $("#example-hint").textContent = hasScenario
+    ? "Ignored: the uploaded file will be checked instead of an example."
+    : "Used when no OpenSCENARIO file is uploaded.";
+  $("#example-input").classList.toggle("inert-choice", hasScenario);
 }
 
 /** Reveal each Remove button only while its input holds a file. */
@@ -160,6 +272,37 @@ FILE_INPUTS.forEach(([inputSelector, buttonSelector]) => {
   });
 });
 
+/* --- Validation ------------------------------------------------------- */
+
+let invalidControl = null;
+
+/** Drop the invalid marking from whichever control last carried it. */
+function clearInvalid() {
+  if (!invalidControl) return;
+  invalidControl.removeAttribute("aria-invalid");
+  if (invalidControl.getAttribute("aria-describedby") === "error") {
+    invalidControl.removeAttribute("aria-describedby");
+  }
+  invalidControl = null;
+}
+
+/* #error is the only place a message is shown, so the offending control has to
+   point at it explicitly to satisfy "errors are identified programmatically". */
+function markInvalid(control) {
+  clearInvalid();
+  if (!control) return;
+  control.setAttribute("aria-invalid", "true");
+  if (!control.hasAttribute("aria-describedby")) {
+    control.setAttribute("aria-describedby", "error");
+  }
+  invalidControl = control;
+  /* The threshold fields live in a collapsed <details>; focusing a control
+     inside one moves focus somewhere the user cannot see. */
+  const collapsed = control.closest("details:not([open])");
+  if (collapsed) collapsed.open = true;
+  control.focus();
+}
+
 /* --- Submission ------------------------------------------------------- */
 
 async function submitSingle() {
@@ -173,7 +316,9 @@ async function submitSingle() {
   } else if (example) {
     data.append("example", example);
   } else {
-    throw new Error("Choose an OpenSCENARIO file or one of the examples.");
+    const error = new Error("Choose an OpenSCENARIO file or one of the examples.");
+    error.control = $("#scenario-input");
+    throw error;
   }
   if (map) data.append("map", map);
   thresholdFormData(data);
@@ -181,11 +326,16 @@ async function submitSingle() {
   const result = await api("/api/checks", { method: "POST", body: data });
   state.result = result;
   renderSingle(result);
+  return `${result.file_name}: ${result.counts.errors} problems, ${result.counts.warnings} warnings.`;
 }
 
 async function submitBatch() {
   const files = $("#batch-input").files;
-  if (!files.length) throw new Error("Choose one or more scenario files, or a .zip archive.");
+  if (!files.length) {
+    const error = new Error("Choose one or more scenario files, or a .zip archive.");
+    error.control = $("#batch-input");
+    throw error;
+  }
 
   const data = new FormData();
   Array.from(files).forEach((file) => data.append("scenarios", file));
@@ -194,6 +344,7 @@ async function submitBatch() {
   const batch = await api("/api/batches", { method: "POST", body: data });
   state.batch = batch;
   renderBatch(batch);
+  return `Batch checked: ${batch.files.length} scenarios.`;
 }
 
 /* A form that fails constraint validation never fires submit, so the click is
@@ -203,6 +354,7 @@ $("#submit").addEventListener("click", () => {
   if (!form.checkValidity()) {
     const invalid = form.querySelector(":invalid");
     setError(invalid ? invalid.validationMessage : "Please correct the highlighted fields.");
+    markInvalid(invalid);
   }
 });
 
@@ -212,15 +364,15 @@ $("#check-form").onsubmit = async (event) => {
   $("#submit").disabled = true;
   setStatus("Checking…", true);
   try {
-    if (state.mode === "single") {
-      await submitSingle();
-    } else {
-      await submitBatch();
-    }
-    setStatus("");
+    const summary = state.mode === "single" ? await submitSingle() : await submitBatch();
+    setStatus(summary);
+    focusResult();
   } catch (error) {
+    // The panel would otherwise keep a result that no longer matches the form.
+    clearResult();
     setError(error.message);
     setStatus("");
+    markInvalid(error.control || null);
   } finally {
     $("#submit").disabled = false;
   }

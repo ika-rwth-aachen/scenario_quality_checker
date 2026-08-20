@@ -106,19 +106,39 @@ function findingsSection(result) {
   return container;
 }
 
-function plotsSection(plots) {
+/*
+ * The charts carry information no alternative text can reasonably restate, so
+ * the peak values behind them are listed as text and the CSV is named as the
+ * full data equivalent. The <img> itself is alt="" because the <figcaption>
+ * already names it -- repeating the label would announce it twice.
+ */
+function plotsSummary(findings) {
+  const peaks = findings.filter((finding) => finding.peak_value !== undefined);
+  const text = peaks.length
+    ? `Peaks in this scenario: ${peaks
+        .map((finding) => `${CATEGORY_LABELS[finding.category] || finding.category} ${formatNumber(finding.peak_value)} ${finding.unit || ""}`.trim())
+        .join("; ")}. Download the CSV report below for the full series.`
+    : "No threshold peaks were recorded. Download the CSV report below for the full series.";
+  return element("p", "plots-summary", text);
+}
+
+function plotsSection(plots, findings) {
   const container = document.createDocumentFragment();
   if (!plots.length) return container;
   container.appendChild(element("h3", null, "Dynamics"));
+  container.appendChild(plotsSummary(findings));
   const grid = element("div", "plots");
   plots.forEach((plot) => {
     const figure = element("figure");
     const image = element("img");
     image.src = plot.url;
-    image.alt = plot.label;
+    image.alt = "";
     image.loading = "lazy";
+    const caption = element("figcaption", null, plot.label);
+    caption.id = `plot-caption-${plot.name}`;
+    figure.setAttribute("aria-labelledby", caption.id);
     figure.appendChild(image);
-    figure.appendChild(element("figcaption", null, plot.label));
+    figure.appendChild(caption);
     const wrapper = element("div", "plot");
     wrapper.appendChild(figure);
     grid.appendChild(wrapper);
@@ -150,6 +170,7 @@ function downloadButton(label, url, filename) {
 /** Render one scenario result into the result panel. */
 function renderSingle(result, backLink = null) {
   $("#result-title").textContent = result.file_name;
+  setDocumentTitle(result.file_name);
   $("#result-actions").hidden = false;
 
   const target = $("#result");
@@ -165,7 +186,7 @@ function renderSingle(result, backLink = null) {
   }
 
   target.appendChild(findingsSection(result));
-  target.appendChild(plotsSection(result.plots));
+  target.appendChild(plotsSection(result.plots, result.findings));
 
   const stem = result.file_name.replace(/\.xosc$/i, "");
   const downloads = element("div", "downloads");
