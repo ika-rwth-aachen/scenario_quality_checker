@@ -7,9 +7,11 @@ const state = {
   defaults: null,
   result: null,
   batch: null,
-  // Rendered once and kept: the notice is a packaged file that cannot change
+  // Rendered once and kept: all three are packaged files that cannot change
   // while the page is open.
   privacyNotice: null,
+  helpDocument: null,
+  aboutDocument: null,
 };
 
 /** Fetch wrapper that turns API error payloads into thrown Errors. */
@@ -381,32 +383,47 @@ $("#check-form").onsubmit = async (event) => {
   }
 };
 
-/* --- Data privacy ----------------------------------------------------- */
+/* --- Help, about and data privacy ------------------------------------- */
 
-/* The notice is rendered from a Markdown file shipped with the application and
-   rendered server-side with embedded HTML disabled, so it is trusted markup -
-   which is what makes innerHTML the right assignment here. */
-async function showDataPrivacyNotice() {
-  const content = $("#data-privacy-content");
-  if (!state.privacyNotice) {
+/* All three texts are Markdown files shipped with the application and rendered
+   server-side with embedded HTML disabled, so they are trusted markup - which
+   is what makes innerHTML the right assignment here. The name is the shared
+   prefix of the button, the dialog and its content element. */
+async function showPackagedDocument(name, path, cacheKey) {
+  const content = $(`#${name}-content`);
+  if (!state[cacheKey]) {
     try {
-      state.privacyNotice = (await api("/api/data-privacy")).html;
+      state[cacheKey] = (await api(path)).html;
     } catch (error) {
-      // Reported inside the dialog: the notice is what the user came for, and
-      // the header status line is easy to miss once the dialog covers it.
+      // Reported inside the dialog: the text is what the user came for, and the
+      // header status line is easy to miss once the dialog covers it.
       content.replaceChildren(
-        element("p", "error", `Could not load the notice: ${error.message}`)
+        element("p", "error", `Could not load this text: ${error.message}`)
       );
-      $("#data-privacy-dialog").showModal();
+      $(`#${name}-dialog`).showModal();
       return;
     }
   }
-  content.innerHTML = state.privacyNotice;
-  $("#forget-session-status").textContent = "";
-  $("#data-privacy-dialog").showModal();
+  content.innerHTML = state[cacheKey];
+  $(`#${name}-dialog`).showModal();
 }
 
-$("#data-privacy").addEventListener("click", showDataPrivacyNotice);
+$("#help").addEventListener("click", () =>
+  showPackagedDocument("help", "/api/help", "helpDocument")
+);
+$("#close-help").addEventListener("click", () => $("#help-dialog").close());
+
+$("#about").addEventListener("click", () =>
+  showPackagedDocument("about", "/api/about", "aboutDocument")
+);
+$("#close-about").addEventListener("click", () => $("#about-dialog").close());
+
+$("#data-privacy").addEventListener("click", () => {
+  // Last run's confirmation would otherwise still be standing when the dialog
+  // reopens, next to a button that has not been pressed yet.
+  $("#forget-session-status").textContent = "";
+  showPackagedDocument("data-privacy", "/api/data-privacy", "privacyNotice");
+});
 $("#close-data-privacy").addEventListener("click", () =>
   $("#data-privacy-dialog").close()
 );

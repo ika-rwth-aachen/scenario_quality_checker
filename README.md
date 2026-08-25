@@ -266,6 +266,10 @@ docker compose -f docker/docker-compose.yml up --build
 - **Thresholds**: override the acceleration and sideslip limits per run without affecting anyone else
   using the same server.
 - **Examples**: check any of the bundled `quality_checker/example_files/` without uploading.
+- **Help**: an in-app dialog explaining the check stages, the finding categories, the bundled
+  examples and where the default thresholds come from, served from `quality_checker/webapp/help.md`.
+- **About**: what the tool does, how to contribute, and the SYNERGIES acknowledgement, served from
+  `quality_checker/webapp/about.md`.
 
 ### HTTP API
 

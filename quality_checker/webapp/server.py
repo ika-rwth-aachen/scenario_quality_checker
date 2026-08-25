@@ -51,6 +51,8 @@ from .results import PLOT_FILES, serialize_checker, summary_row_json
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIRECTORY = Path(__file__).with_name("static")
 DATA_PRIVACY_PATH = Path(__file__).with_name("data_privacy.md")
+HELP_PATH = Path(__file__).with_name("help.md")
+ABOUT_PATH = Path(__file__).with_name("about.md")
 
 WORK_ROOT = Path(tempfile.gettempdir()) / "scenario-quality-checker-web"
 SESSION_COOKIE_NAME = "sqc_session"
@@ -1173,6 +1175,24 @@ def data_privacy_notice():
     return {
         "text": DATA_PRIVACY_PATH.read_text(encoding="utf-8"),
         "html": render_markdown(DATA_PRIVACY_PATH),
+    }
+
+
+@app.get("/api/help")
+def help_document():
+    """Return the in-app explanation of what the web interface does."""
+    return {
+        "text": HELP_PATH.read_text(encoding="utf-8"),
+        "html": render_markdown(HELP_PATH),
+    }
+
+
+@app.get("/api/about")
+def about_document():
+    """Return the project description, contribution note and acknowledgement."""
+    return {
+        "text": ABOUT_PATH.read_text(encoding="utf-8"),
+        "html": render_markdown(ABOUT_PATH),
     }
 
 

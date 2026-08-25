@@ -44,6 +44,84 @@ def test_index_offers_the_legal_notices(client):
     assert 'id="forget-session"' in body
 
 
+def test_index_offers_the_help_dialog(client):
+    """The help button and the dialog it fills reach the user."""
+    body = client.get("/").text
+
+    assert 'id="help"' in body
+    assert 'id="help-dialog"' in body
+    assert 'id="help-content"' in body
+
+
+def test_help_explains_the_web_interface(client):
+    """
+    The help must keep naming what the interface actually offers.
+
+    Like the privacy notice, it repeats configurable defaults and labels that
+    live in the code, and help that quietly disagrees with the app misleads
+    rather than helps.
+    """
+    payload = client.get("/api/help").json()
+
+    help_text = payload["text"]
+    assert ".xosc" in help_text
+    assert ".xodr" in help_text
+    assert "Check quality" in help_text
+    assert "Thresholds" in help_text
+    assert "20 MiB" in help_text
+    assert "50 files" in help_text
+    assert "not done" in help_text
+
+    assert "<h2>" in payload["html"]
+    assert "<table>" in payload["html"]
+
+
+def test_index_offers_the_about_dialog(client):
+    """The about button and the dialog it fills reach the user."""
+    body = client.get("/").text
+
+    assert 'id="about"' in body
+    assert 'id="about-dialog"' in body
+    assert 'id="about-content"' in body
+
+
+def test_about_carries_the_funding_acknowledgement(client):
+    """
+    The acknowledgement is a grant obligation, so it must survive rendering.
+
+    The images are asserted on because they are the fragile part: the renderer
+    disables embedded HTML, so an <img> tag written by hand would be escaped
+    into visible text instead of a logo.
+    """
+    payload = client.get("/api/about").json()
+
+    about = payload["text"]
+    assert "SYNERGIES" in about
+    assert "Funded by the European Union" in about
+    assert "CINEA" in about
+    assert "github.com/ika-rwth-aachen/scenario_quality_checker" in about
+
+    html = payload["html"]
+    assert '<img src="/branding/synergies.svg"' in html
+    assert '<img src="/branding/funded_by_eu.svg"' in html
+
+
+def test_branding_assets_used_by_the_about_dialog_are_served(client):
+    """
+    A renamed or unpackaged logo must fail here, not as a broken image.
+
+    The mount is conditional on the directory existing, so this also covers the
+    case where the assets are missing from an installed package entirely.
+    """
+    for name in ("synergies.svg", "funded_by_eu.svg"):
+        response = client.get(f"/branding/{name}")
+
+        assert response.status_code == 200, name
+        # Without a viewBox the logos cannot be scaled down for the dialog:
+        # they would be cropped to their top-left corner instead.
+        assert "viewBox" in response.text, name
+
+
 def test_data_privacy_notice_documents_application_processing(client):
     """
     The notice must keep naming what the application actually does.

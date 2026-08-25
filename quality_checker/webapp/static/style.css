@@ -512,7 +512,7 @@ td.count-warning {
   margin-bottom: 12px;
 }
 
-/* The data privacy notice, the only dialog in the application. */
+/* The help and data privacy dialogs, the only dialogs in the application. */
 dialog {
   width: min(680px, 92vw);
   max-height: 85vh;
@@ -533,10 +533,20 @@ dialog .panel {
 dialog p {
   margin: 0 0 12px;
 }
-#data-privacy-content {
+#data-privacy-content,
+#help-content,
+#about-content {
   max-height: 60vh;
   overflow: auto;
   font-size: 0.875rem;
+}
+/* The about text carries the project and funding logos. One width for all of
+   them keeps the pair looking like a set, whatever their intrinsic sizes are. */
+.document-content img {
+  display: block;
+  width: min(240px, 100%);
+  height: auto;
+  margin: 12px 0;
 }
 .document-content h1 {
   margin-top: 0;
@@ -550,6 +560,26 @@ dialog p {
 }
 .document-content li + li {
   margin-top: 0.4em;
+}
+/* The help text uses tables the notice does not. Unlike the batch table above
+   they carry prose, so they wrap instead of keeping every cell on one line -
+   without the reset they would push the dialog into horizontal scrolling. */
+.document-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.8em 0;
+}
+.document-content th,
+.document-content td {
+  border-bottom: 1px solid var(--line);
+  padding: 6px 8px;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+.document-content th {
+  color: var(--navy);
+  font-size: 0.875rem;
 }
 .dialog-actions {
   display: flex;

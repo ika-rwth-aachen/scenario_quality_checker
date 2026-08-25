@@ -19,6 +19,8 @@
     <button id="tab-batch" class="tab" type="button"
             role="tab" aria-selected="false" aria-controls="batch-inputs" tabindex="-1">Batch</button>
   </div>
+  <button id="help" type="button" class="header-legal-action">Help</button>
+  <button id="about" type="button" class="header-legal-action">About</button>
   <a class="header-legal-action"
      href="https://scenario.center/imprint/"
      target="_blank" rel="noopener noreferrer">Imprint</a>
@@ -109,6 +111,28 @@
     </div>
   </section>
 </main>
+
+<dialog id="help-dialog" aria-labelledby="help-dialog-title">
+  <section class="panel">
+    <div class="panel-title">
+      <h2 id="help-dialog-title">Help</h2>
+      <button id="close-help" type="button" class="secondary">Close</button>
+    </div>
+    <div id="help-content" class="document-content" tabindex="0"
+         aria-label="scenario quality checker help"></div>
+  </section>
+</dialog>
+
+<dialog id="about-dialog" aria-labelledby="about-dialog-title">
+  <section class="panel">
+    <div class="panel-title">
+      <h2 id="about-dialog-title">About</h2>
+      <button id="close-about" type="button" class="secondary">Close</button>
+    </div>
+    <div id="about-content" class="document-content" tabindex="0"
+         aria-label="about scenario quality checker"></div>
+  </section>
+</dialog>
 
 <dialog id="data-privacy-dialog" aria-labelledby="data-privacy-dialog-title">
   <section class="panel">
