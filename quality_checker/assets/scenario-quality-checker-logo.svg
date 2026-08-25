@@ -1,13 +1,63 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="620" height="100" viewBox="0 0 620 100" role="img" aria-labelledby="title">
-  <title id="title">scenario.quality.checker</title>
-  <svg x="8" y="12" width="80" height="76" viewBox="0 0 84 80">
-    <rect x="6" y="4" width="36" height="48" rx="2" fill="none" stroke="#012a7a" stroke-width="4"></rect>
-    <line x1="13" y1="16" x2="34" y2="16" stroke="#012a7a" stroke-width="4" stroke-linecap="round"></line>
-    <line x1="13" y1="24" x2="34" y2="24" stroke="#012a7a" stroke-width="4" stroke-linecap="round"></line>
-    <line x1="13" y1="32" x2="28" y2="32" stroke="#012a7a" stroke-width="4" stroke-linecap="round"></line>
-    <circle cx="54" cy="46" r="17" fill="#ffffff" stroke="#012a7a" stroke-width="5"></circle>
-    <path d="M47 47l5 5l11-12" fill="none" stroke="#012a7a" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"></path>
-    <line x1="66" y1="58" x2="76" y2="70" stroke="#012a7a" stroke-width="7" stroke-linecap="round"></line>
-  </svg>
-  <text x="103" y="57" fill="#012a7a" font-family="Helvetica, Arial, sans-serif" font-size="38" font-weight="700">scenario.quality.checker</text>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="180" viewBox="0 0 760 180" role="img" aria-labelledby="title desc">
+  <title id="title">Scenario Quality Checker logo</title>
+  <desc id="desc">A multicolor gear-like C dissolving into square pixels around a magnifying glass, followed by the words scenario dot quality dot checker.</desc>
+
+  <defs>
+    <linearGradient id="top-spectrum" x1="32" y1="35" x2="138" y2="47" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff264f"/>
+      <stop offset="0.48" stop-color="#ff7f09"/>
+      <stop offset="1" stop-color="#ffcb24"/>
+    </linearGradient>
+    <linearGradient id="left-spectrum" x1="45" y1="36" x2="38" y2="145" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff264f"/>
+      <stop offset="0.38" stop-color="#f50062"/>
+      <stop offset="0.72" stop-color="#5c168d"/>
+      <stop offset="1" stop-color="#00197d"/>
+    </linearGradient>
+    <linearGradient id="bottom-spectrum" x1="34" y1="142" x2="140" y2="132" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00197d"/>
+      <stop offset="0.48" stop-color="#0073c0"/>
+      <stop offset="1" stop-color="#0ff9fb"/>
+    </linearGradient>
+    <linearGradient id="upper-end-spectrum" x1="118" y1="22" x2="153" y2="58" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff7f09"/>
+      <stop offset="1" stop-color="#ffcb24"/>
+    </linearGradient>
+    <linearGradient id="glass-gradient" x1="52" y1="51" x2="122" y2="126" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#13152c"/>
+      <stop offset="1" stop-color="#0073c0"/>
+    </linearGradient>
+    <path id="gear-tooth" d="M64 37 L68 28 L69 14 Q68 5 77 4 H95 Q104 5 103 14 L104 28 L108 37 Z"/>
+  </defs>
+
+  <!-- Generator-style seven-tooth C gear: the right-hand tooth is intentionally absent. -->
+  <g>
+    <!-- Teeth sit behind the ring so their broad bases merge without visible seams. -->
+    <use href="#gear-tooth" fill="url(#top-spectrum)"/>
+    <use href="#gear-tooth" fill="url(#upper-end-spectrum)" transform="rotate(45 86 90)"/>
+    <use href="#gear-tooth" fill="url(#bottom-spectrum)" transform="rotate(135 86 90)"/>
+    <use href="#gear-tooth" fill="url(#bottom-spectrum)" transform="rotate(180 86 90)"/>
+    <use href="#gear-tooth" fill="url(#left-spectrum)" transform="rotate(225 86 90)"/>
+    <use href="#gear-tooth" fill="url(#left-spectrum)" transform="rotate(270 86 90)"/>
+    <use href="#gear-tooth" fill="url(#left-spectrum)" transform="rotate(315 86 90)"/>
+    <path d="M45 48 C56 37 70 32 86 32 C102 32 116 37 127 48" fill="none" stroke="url(#top-spectrum)" stroke-width="27" stroke-linecap="round"/>
+    <path d="M46 47 C23 68 23 112 46 133" fill="none" stroke="url(#left-spectrum)" stroke-width="27" stroke-linecap="round"/>
+    <path d="M45 132 C56 143 70 148 86 148 C102 148 116 143 127 132" fill="none" stroke="url(#bottom-spectrum)" stroke-width="27" stroke-linecap="round"/>
+  </g>
+
+  <!-- Magnifying glass: scenario inspection and quality analysis. -->
+  <circle cx="78" cy="79" r="20" fill="none" stroke="url(#glass-gradient)" stroke-width="9"/>
+  <path d="M92 93 L108 109" fill="none" stroke="url(#glass-gradient)" stroke-width="10" stroke-linecap="round"/>
+
+  <!-- Pixel trail mirrors the dissolving detail in the supplied generator mark. -->
+  <rect x="136" y="52" width="9" height="9" rx="1.5" fill="#00b9df"/>
+  <rect x="155" y="64" width="14" height="14" rx="2" fill="#08d7ed"/>
+  <rect x="131" y="82" width="12" height="12" rx="2" fill="#0073c0"/>
+  <rect x="151" y="91" width="7" height="7" rx="1.5" fill="#00b9df"/>
+  <rect x="166" y="106" width="10" height="10" rx="1.5" fill="#0ff9fb"/>
+  <rect x="138" y="119" width="8" height="8" rx="1.5" fill="#0073c0"/>
+
+  <!-- Wordmark. Helvetica matches the supplied Scenario Center artwork. -->
+  <text x="194" y="105" fill="#00549f" font-family="Helvetica, Arial, sans-serif" font-size="44" font-weight="700" letter-spacing="-1.1">scenario.quality.checker</text>
 </svg>

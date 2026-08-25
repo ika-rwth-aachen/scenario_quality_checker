@@ -1660,7 +1660,7 @@ def main():
     port = int_from_environment("SQC_PORT", 8001)
     # Behind a TLS-terminating proxy the request scheme is http on the wire, so
     # without this the Secure cookie flag would never be set in exactly the
-    # topology the README recommends. Only the listed peers are trusted; set
+    # topology docs/deployment.md recommends. Only the listed peers are trusted; set
     # SQC_FORWARDED_ALLOW_IPS to the proxy's address.
     forwarded_allow_ips = os.environ.get("SQC_FORWARDED_ALLOW_IPS", "127.0.0.1")
     uvicorn.run(
