@@ -19,6 +19,10 @@
     <button id="tab-batch" class="tab" type="button"
             role="tab" aria-selected="false" aria-controls="batch-inputs" tabindex="-1">Batch</button>
   </div>
+  <a class="header-legal-action"
+     href="https://scenario.center/imprint/"
+     target="_blank" rel="noopener noreferrer">Imprint</a>
+  <button id="data-privacy" type="button" class="header-legal-action">Data privacy</button>
   <span id="status" class="status" role="status"></span>
 </header>
 
@@ -105,6 +109,25 @@
     </div>
   </section>
 </main>
+
+<dialog id="data-privacy-dialog" aria-labelledby="data-privacy-dialog-title">
+  <section class="panel">
+    <div class="panel-title">
+      <h2 id="data-privacy-dialog-title">Data privacy</h2>
+      <button id="close-data-privacy" type="button" class="secondary">Close</button>
+    </div>
+    <p>
+      <a href="https://scenario.center/privacy-policy/"
+         target="_blank" rel="noopener noreferrer">General scenario.center privacy policy</a>
+    </p>
+    <div id="data-privacy-content" class="document-content" tabindex="0"
+         aria-label="scenario quality checker data processing notice"></div>
+    <div class="dialog-actions">
+      <button id="forget-session" type="button" class="secondary">Delete my uploads now</button>
+      <span id="forget-session-status" class="status" role="status"></span>
+    </div>
+  </section>
+</dialog>
 
 <script src="/assets/app.js"></script>
 <script src="/assets/render-single.js"></script>

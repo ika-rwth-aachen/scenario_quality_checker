@@ -351,6 +351,26 @@ Two limits are worth knowing precisely, because the names promise more than they
   but anything that loosens `SameSite` or introduces cross-origin use needs an origin check or a
   token added at the same time.
 
+### Legal notices
+
+The header carries an **Imprint** link to <https://scenario.center/imprint/> and a **Data privacy**
+dialog. The dialog links the general policy at <https://scenario.center/privacy-policy/> and, below
+it, renders [`quality_checker/webapp/data_privacy.md`](quality_checker/webapp/data_privacy.md) — a
+supplement describing only what this application itself processes: the `sqc_session` cookie, where
+uploads and reports are stored, how long they are kept, the upload limits, and what the audit log
+records. The dialog also offers **Delete my uploads now**, which calls `DELETE /api/session` to drop
+the session directory and the cookie immediately instead of waiting out `SQC_SESSION_TTL_SECONDS`.
+
+Two things follow for anyone deploying this:
+
+- **The imprint duty attaches to whoever runs the instance.** Outside an ika-operated deployment the
+  linked scenario.center imprint is the wrong publisher, and the link has to be repointed.
+- **The supplement quotes the defaults from `webapp/server.py`.** Changing `SQC_SESSION_TTL_SECONDS`,
+  `SQC_MAX_UPLOAD_BYTES` or `SQC_MAX_BATCH_FILES` makes the notice inaccurate, so edit the Markdown
+  in the same change. `tests/test_webapp.py::test_data_privacy_notice_documents_application_processing`
+  asserts on those figures so the drift shows up as a failing test rather than as a wrong statement
+  to users.
+
 ## How it works
 
 1. **XML + XSD validation** — the file is parsed as XML, the OpenSCENARIO version is read from the

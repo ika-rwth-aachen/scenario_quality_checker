@@ -37,6 +37,9 @@ web = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "python-multipart>=0.0.9",
+    # Renders the packaged data privacy notice. Only the web interface shows
+    # it, so the CLI does not have to carry the dependency.
+    "markdown-it-py>=3.0",
 ]
 dev = [
     "pytest>=8",
@@ -59,6 +62,7 @@ exclude = ["tests*"]
 quality_checker = [
     "schemas/*.xsd",
     "webapp/static/*",
+    "webapp/*.md",
     "example_files/*.xosc",
     "assets/*",
 ]

@@ -34,6 +34,75 @@ def test_index_and_examples_are_served(client):
     assert "envelope_dynamic_error_1.xosc" in examples
 
 
+def test_index_offers_the_legal_notices(client):
+    """The imprint link and the data privacy controls reach the user."""
+    body = client.get("/").text
+
+    assert "https://scenario.center/imprint/" in body
+    assert "https://scenario.center/privacy-policy/" in body
+    assert 'id="data-privacy"' in body
+    assert 'id="forget-session"' in body
+
+
+def test_data_privacy_notice_documents_application_processing(client):
+    """
+    The notice must keep naming what the application actually does.
+
+    Asserting on the limits is the point: they are configurable defaults that
+    someone will eventually change, and a privacy notice that quietly disagrees
+    with the code is worse than none.
+    """
+    payload = client.get("/api/data-privacy").json()
+
+    notice = payload["text"]
+    assert "sqc_session" in notice
+    assert "1 hour" in notice
+    assert "20 MiB" in notice
+    assert "50 files" in notice
+    assert "200 MiB" in notice
+    assert "Delete my uploads now" in notice
+
+    assert "<h2>" in payload["html"]
+
+
+def test_packaged_markdown_renders_without_embedded_html(tmp_path):
+    """
+    The renderer must neutralise HTML and send links away safely.
+
+    The notice itself carries neither today, so rendering it would not exercise
+    either guarantee - and the frontend assigns the result with innerHTML.
+    """
+    from quality_checker.webapp.server import render_markdown
+
+    source = tmp_path / "sample.md"
+    source.write_text(
+        "[policy](https://scenario.center/privacy-policy/)\n\n<script>alert(1)</script>\n",
+        encoding="utf-8",
+    )
+
+    html = render_markdown(source)
+
+    assert 'target="_blank" rel="noopener noreferrer"' in html
+    assert "<script>" not in html
+
+
+def test_clearing_a_session_removes_its_files(client, example):
+    """The erase button's endpoint really drops the uploads, not just the cookie."""
+    from quality_checker.webapp.server import WORK_ROOT
+
+    result = created(
+        client.post("/api/checks", files=upload(example("envelope_file_error_1.xosc")))
+    )
+    session_id = client.cookies["sqc_session"]
+    assert (WORK_ROOT / session_id).is_dir()
+
+    assert client.delete("/api/session").json() == {"cleared": True}
+
+    assert not (WORK_ROOT / session_id).exists()
+    assert "sqc_session" not in client.cookies
+    assert client.get(f"/api/runs/{result['run_id']}").status_code == 404
+
+
 def test_valid_scenario_reports_no_issues(client, example):
     """A clean scenario checks out without findings."""
     result = created(

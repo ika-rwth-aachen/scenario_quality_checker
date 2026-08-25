@@ -7,6 +7,9 @@ const state = {
   defaults: null,
   result: null,
   batch: null,
+  // Rendered once and kept: the notice is a packaged file that cannot change
+  // while the page is open.
+  privacyNotice: null,
 };
 
 /** Fetch wrapper that turns API error payloads into thrown Errors. */
@@ -377,6 +380,61 @@ $("#check-form").onsubmit = async (event) => {
     $("#submit").disabled = false;
   }
 };
+
+/* --- Data privacy ----------------------------------------------------- */
+
+/* The notice is rendered from a Markdown file shipped with the application and
+   rendered server-side with embedded HTML disabled, so it is trusted markup -
+   which is what makes innerHTML the right assignment here. */
+async function showDataPrivacyNotice() {
+  const content = $("#data-privacy-content");
+  if (!state.privacyNotice) {
+    try {
+      state.privacyNotice = (await api("/api/data-privacy")).html;
+    } catch (error) {
+      // Reported inside the dialog: the notice is what the user came for, and
+      // the header status line is easy to miss once the dialog covers it.
+      content.replaceChildren(
+        element("p", "error", `Could not load the notice: ${error.message}`)
+      );
+      $("#data-privacy-dialog").showModal();
+      return;
+    }
+  }
+  content.innerHTML = state.privacyNotice;
+  $("#forget-session-status").textContent = "";
+  $("#data-privacy-dialog").showModal();
+}
+
+$("#data-privacy").addEventListener("click", showDataPrivacyNotice);
+$("#close-data-privacy").addEventListener("click", () =>
+  $("#data-privacy-dialog").close()
+);
+
+/* Erasure on request, rather than only after the retention period. The server
+   drops the session directory and clears the cookie; the page then has to let
+   go of the results it is still showing, because their run ids are gone. */
+$("#forget-session").addEventListener("click", async () => {
+  const button = $("#forget-session");
+  const status = $("#forget-session-status");
+  button.disabled = true;
+  status.textContent = "Deleting…";
+  try {
+    await api("/api/session", { method: "DELETE" });
+    clearResult();
+    FILE_INPUTS.forEach(([inputSelector]) => {
+      $(inputSelector).value = "";
+    });
+    syncFileInputs();
+    setError("");
+    setStatus("");
+    status.textContent = "Your uploads and reports have been deleted.";
+  } catch (error) {
+    status.textContent = `Could not delete: ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+});
 
 /* --- Startup ---------------------------------------------------------- */
 

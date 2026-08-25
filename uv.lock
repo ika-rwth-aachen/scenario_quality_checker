@@ -1738,6 +1738,7 @@ dev = [
 ]
 web = [
     { name = "fastapi" },
+    { name = "markdown-it-py" },
     { name = "python-multipart" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1750,6 +1751,7 @@ requires-dist = [
     { name = "fpdf2", specifier = ">=2.8.1" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "loguru", specifier = ">=0.7.3" },
+    { name = "markdown-it-py", marker = "extra == 'web'", specifier = ">=3.0" },
     { name = "matplotlib", specifier = ">=3.9.4" },
     { name = "numpy", specifier = ">=2.0.2" },
     { name = "pandas", specifier = ">=2.2.3" },

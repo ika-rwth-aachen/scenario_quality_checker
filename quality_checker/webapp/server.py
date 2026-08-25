@@ -34,6 +34,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, Response, Uploa
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
+from markdown_it import MarkdownIt
 
 from .. import safe_xml
 from ..config import int_from_environment
@@ -49,6 +50,7 @@ from .results import PLOT_FILES, serialize_checker, summary_row_json
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIRECTORY = Path(__file__).with_name("static")
+DATA_PRIVACY_PATH = Path(__file__).with_name("data_privacy.md")
 
 WORK_ROOT = Path(tempfile.gettempdir()) / "scenario-quality-checker-web"
 SESSION_COOKIE_NAME = "sqc_session"
@@ -1141,6 +1143,36 @@ def thresholds():
     return {
         "defaults": Thresholds.default().as_dict(),
         "units": {"acceleration": "m/s^2", "sideslip": "rad"},
+    }
+
+
+def render_markdown(path):
+    """
+    Render trusted, packaged Markdown without allowing embedded HTML.
+
+    The source is a file shipped with the package, never user input, but
+    'html': False is set anyway so that a future edit to the notice cannot turn
+    into markup the browser executes. The frontend assigns the result with
+    innerHTML, which is only safe while that stays true.
+
+    Args:
+        path: Path of the packaged Markdown file.
+    return: Rendered HTML, with every link opening in a new tab.
+    """
+    return (
+        MarkdownIt("commonmark", {"html": False})
+        .enable("table")
+        .render(path.read_text(encoding="utf-8"))
+        .replace("<a href=", '<a target="_blank" rel="noopener noreferrer" href=')
+    )
+
+
+@app.get("/api/data-privacy")
+def data_privacy_notice():
+    """Return the application's supplement to the operator's privacy policy."""
+    return {
+        "text": DATA_PRIVACY_PATH.read_text(encoding="utf-8"),
+        "html": render_markdown(DATA_PRIVACY_PATH),
     }
 
 

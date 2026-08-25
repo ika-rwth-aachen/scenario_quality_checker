@@ -101,6 +101,22 @@ button.tab.active {
   background: var(--panel);
   color: var(--ink);
 }
+/* Imprint and data privacy read as header text, not as actions competing with
+   the mode tabs, but keep a 32px target so they stay comfortably clickable. */
+.header-legal-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 4px;
+  color: var(--ink);
+  text-decoration: none;
+  white-space: nowrap;
+}
+button.header-legal-action {
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+}
 .status {
   margin-left: auto;
   color: var(--muted);
@@ -494,6 +510,60 @@ td.count-warning {
 }
 .back-link {
   margin-bottom: 12px;
+}
+
+/* The data privacy notice, the only dialog in the application. */
+dialog {
+  width: min(680px, 92vw);
+  max-height: 85vh;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  padding: 0;
+  color: var(--ink);
+  overflow: visible;
+}
+dialog::backdrop {
+  background: #13283f66;
+}
+dialog .panel {
+  max-height: 85vh;
+  overflow: auto;
+}
+dialog p {
+  margin: 0 0 12px;
+}
+#data-privacy-content {
+  max-height: 60vh;
+  overflow: auto;
+  font-size: 0.875rem;
+}
+.document-content h1 {
+  margin-top: 0;
+  color: var(--navy);
+  font-size: 1.125rem;
+}
+.document-content h2 {
+  margin-top: 1.5em;
+  color: var(--navy);
+  font-size: 1rem;
+}
+.document-content li + li {
+  margin-top: 0.4em;
+}
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 4px;
+}
+/* The confirmation sits next to its button rather than being pushed right the
+   way the header status is. */
+.dialog-actions .status {
+  margin-left: 0;
 }
 
 /*
