@@ -68,7 +68,7 @@ Additional third-party assets included in this repository:
 ---------------------------------------------------------------
 
 11. ASAM OpenSCENARIO XSD schemas (files in `quality_checker/schemas/`)
-- License: ASAM license terms with substitution that 'the licensor grants everyone a basic, non-exclusive and unlimited license to use the standard ASAM OpenSCENARIO XML'
+- License: ASAM license terms with following addition: ASAM allows unrestricted distribution of this standard. §2 (1) of ASAM’s regular license terms is therefore substituted by the following clause: "The licensor grants everyone a basic, non-exclusive and unlimited license to use the standard ASAM OpenSCENARIO XML"
 - Source: https://www.asam.net/license
 - Source: https://publications.pages.asam.net/standards/ASAM_OpenSCENARIO/ASAM_OpenSCENARIO_XML/v1.3.0/index.html
 
