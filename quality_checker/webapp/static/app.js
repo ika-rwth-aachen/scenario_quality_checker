@@ -408,6 +408,26 @@ async function showPackagedDocument(name, path, cacheKey) {
   $(`#${name}-dialog`).showModal();
 }
 
+/* showModal() draws a backdrop but does not dismiss on it. A click that lands on
+   the dialog element rather than inside its .panel is a backdrop click - the
+   dialog itself is transparent and only the panel is the visible box, so that
+   is the test rather than the dialog's own bounds. The press has to have
+   started outside as well, otherwise selecting text in the document and
+   releasing past the edge would close the dialog under the user's hand. */
+function closeOnOutsideClick(dialog) {
+  let pressedOutside = false;
+  dialog.addEventListener("pointerdown", (event) => {
+    pressedOutside = !event.target.closest(".panel");
+  });
+  dialog.addEventListener("click", (event) => {
+    if (pressedOutside && !event.target.closest(".panel")) dialog.close();
+  });
+}
+
+["#help-dialog", "#about-dialog", "#data-privacy-dialog"].forEach((selector) =>
+  closeOnOutsideClick($(selector))
+);
+
 $("#help").addEventListener("click", () =>
   showPackagedDocument("help", "/api/help", "helpDocument")
 );

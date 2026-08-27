@@ -84,4 +84,3 @@ The scenarios used above live in [`quality_checker/example_files/`](../quality_c
 ## See also
 
 - [Reports](reports.md) — where the output lands, the CSV formats, and exit-code behaviour
-- [Troubleshooting](troubleshooting.md) — what to do when a run produces nothing

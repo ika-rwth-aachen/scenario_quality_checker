@@ -24,6 +24,33 @@
 input[type="checkbox"] {
   accent-color: var(--navy);
 }
+/*
+ * Disclosure arrow, drawn the same way as in scenario.generator: the native
+ * marker varies per browser, so a rotated corner marks what is collapsible and
+ * turns to point down once the panel is open.
+ */
+details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+details > summary::-webkit-details-marker {
+  display: none;
+}
+details > summary::before {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  margin: 0 9px 0 2px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  content: "";
+  transform: rotate(-45deg);
+  transform-origin: center;
+}
+details[open] > summary::before {
+  transform: rotate(45deg) translate(-1px, -1px);
+}
 body {
   margin: 0;
   background: var(--paper);
@@ -85,8 +112,17 @@ header {
   background: #dcecf5;
 }
 .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin: 0;
   font: 700 1.0625rem Helvetica, Arial, sans-serif;
+}
+/* The icon is decorative here: the heading already carries the name as text. */
+.brand img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
 }
 .tabs {
   display: flex;
@@ -292,10 +328,10 @@ select.inert-choice {
   border-radius: 8px;
   padding: 10px;
 }
+/* No gap: the arrow brings its own margin, and the badge sets its own below. */
 .thresholds summary {
   display: flex;
   align-items: center;
-  gap: 8px;
   min-height: 24px;
   padding: 4px 0;
   cursor: pointer;
@@ -303,6 +339,7 @@ select.inert-choice {
 }
 /* Says that a collapsed panel is quietly changing the result of a check. */
 .summary-badge {
+  margin-left: 8px;
   border-radius: 999px;
   background: #f8f0dc;
   color: var(--warning);
@@ -463,8 +500,19 @@ h3 {
 .downloads {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 16px;
   margin-top: 18px;
+}
+/* Outlined, not filled: a real button boundary that still yields to #submit. */
+button.download {
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  color: var(--navy);
+  padding: 10px 14px;
+}
+button.download:hover:not(:disabled) {
+  border-color: var(--navy);
+  background: var(--paper);
 }
 
 /* Batch table. */

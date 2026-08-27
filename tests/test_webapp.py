@@ -122,6 +122,20 @@ def test_branding_assets_used_by_the_about_dialog_are_served(client):
         assert "viewBox" in response.text, name
 
 
+def test_header_logo_is_served(client):
+    """
+    The icon beside the title in the header must not become a broken image.
+
+    Kept separate from the About-dialog logos because this one is a PNG, so the
+    viewBox assertion there does not apply.
+    """
+    response = client.get("/branding/scenario_quality_checker_logo.png")
+
+    assert response.status_code == 200
+    # An HTML error page would pass a plain non-empty check, the magic bytes not.
+    assert response.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
 def test_data_privacy_notice_documents_application_processing(client):
     """
     The notice must keep naming what the application actually does.

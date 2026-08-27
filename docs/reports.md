@@ -79,4 +79,3 @@ quality_checker/example_files/envelope_xml_not_loadable.xosc,False,False,not don
 ## See also
 
 - [CLI reference](cli-reference.md) — the flags that decide which of these files are written
-- [Troubleshooting](troubleshooting.md) — symptoms and fixes when the output is not what you expect

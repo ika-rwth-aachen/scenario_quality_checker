@@ -148,7 +148,7 @@ function plotsSection(plots, findings) {
 }
 
 function downloadButton(label, url, filename) {
-  const button = element("button", "secondary", label);
+  const button = element("button", "download", label);
   button.type = "button";
   button.onclick = async () => {
     button.disabled = true;

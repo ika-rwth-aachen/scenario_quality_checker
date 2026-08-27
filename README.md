@@ -80,9 +80,6 @@ You now have `reports/envelope_dynamic_error_1.pdf` (summary with plots) and
 `reports/envelope_dynamic_error_1.xosc.csv` (machine-readable findings). Output directories are
 created automatically. Drop `--print-log` for a quiet run.
 
-If a run produces nothing, or produces something you did not expect, see
-[Troubleshooting](https://github.com/ika-rwth-aachen/scenario_quality_checker/blob/main/docs/troubleshooting.md).
-
 ## Usage
 
 Two commands, available as `scenario-quality-checker <command>` or
@@ -169,7 +166,6 @@ Each stage runs only if the previous one passed. The full description is in
 | [Web interface](https://github.com/ika-rwth-aachen/scenario_quality_checker/blob/main/docs/web-interface.md) | Features, HTTP API, environment variables |
 | [Deployment](https://github.com/ika-rwth-aachen/scenario_quality_checker/blob/main/docs/deployment.md) | Hardening, session affinity, legal notices |
 | [Architecture](https://github.com/ika-rwth-aachen/scenario_quality_checker/blob/main/docs/architecture.md) | The check pipeline, stage by stage |
-| [Troubleshooting](https://github.com/ika-rwth-aachen/scenario_quality_checker/blob/main/docs/troubleshooting.md) | Symptoms and fixes |
 | [Development and contributing](https://github.com/ika-rwth-aachen/scenario_quality_checker/blob/main/docs/contributing.md) | Test suite, linting, how to open a good PR |
 
 Three further Markdown files are served by the running web app itself — the in-app

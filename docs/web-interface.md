@@ -82,4 +82,3 @@ each session owns its own subdirectory, and startup cleanup only removes leftove
 ## See also
 
 - [Deployment](deployment.md) — hardening, session affinity, and the legal notices
-- [Troubleshooting](troubleshooting.md) — startup and headless-rendering problems
