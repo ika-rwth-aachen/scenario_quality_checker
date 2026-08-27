@@ -457,7 +457,7 @@ $("#forget-session").addEventListener("click", async () => {
   button.disabled = true;
   status.textContent = "Deleting…";
   try {
-    await api("/api/session", { method: "DELETE" });
+    const result = await api("/api/session", { method: "DELETE" });
     clearResult();
     FILE_INPUTS.forEach(([inputSelector]) => {
       $(inputSelector).value = "";
@@ -465,7 +465,11 @@ $("#forget-session").addEventListener("click", async () => {
     syncFileInputs();
     setError("");
     setStatus("");
-    status.textContent = "Your uploads and reports have been deleted.";
+    /* The server reports whether it actually removed anything. Claiming a
+       deletion it did not perform is the one thing this button must not do. */
+    status.textContent = result.cleared
+      ? "Your uploads and reports have been deleted."
+      : "There was nothing left to delete.";
   } catch (error) {
     status.textContent = `Could not delete: ${error.message}`;
   } finally {

@@ -372,6 +372,10 @@ class SessionStore:
             self._sessions.pop(oldest.session_id, None)
             shutil.rmtree(WORK_ROOT / oldest.session_id, ignore_errors=True)
 
+    def knows(self, session_id):
+        """Return True when this process still holds the session."""
+        return session_id in self._sessions
+
     def forget(self, session_id):
         """
         Drop one session and delete its working directory.
@@ -792,7 +796,10 @@ def _render_plots(checker, plot_directory):
     try:
         plot_dynamics(checker, analyzed_dynamics, output_dir=plot_directory)
     except Exception as exc:  # noqa: BLE001 - plots are supplementary to the findings.
-        logger.warning(f"Could not render plots for {checker.file_path}: {exc}")
+        # The path carries the session id and the uploaded file name, and the
+        # exception text tends to repeat them, so only the type is logged -
+        # same rule audit() follows for rejections.
+        logger.warning(f"Could not render plots: {type(exc).__name__}")
 
     return [
         (name, label)
@@ -1273,6 +1280,15 @@ async def check_scenario(
         checker, plots = await in_worker(
             request, _check_scenario, scenario_path, limits, run_directory
         )
+        # The worker re-creates this directory to write the processed scenario
+        # copy and the plots, which lands after a sweep or an eviction dropped
+        # the session. Left alone it would sit in the working root as an orphan
+        # until it is a whole TTL stale.
+        if not store.knows(session.session_id):
+            shutil.rmtree(run_directory, ignore_errors=True)
+            raise HTTPException(
+                status_code=404, detail="The session ended before the check finished"
+            )
 
         run = Run(
             run_id=run_id,
@@ -1337,7 +1353,11 @@ def _build_single_report(run, want_pdf):
 async def get_run_pdf(request: Request, run_id: str):
     """Return the PDF report of a run, generating it on first request."""
     run = get_run(request, run_id)
-    path = await in_worker(request, _build_single_report, run, True)
+    # Report building writes into the session directory, so it is serialized
+    # against DELETE /api/session the same way a check is. Costs nothing: the
+    # checker executor is a single worker, so this work is already sequential.
+    async with request.state.session.lock:
+        path = await in_worker(request, _build_single_report, run, True)
     if not path.is_file():
         raise HTTPException(
             status_code=500, detail="The PDF report could not be created"
@@ -1349,7 +1369,11 @@ async def get_run_pdf(request: Request, run_id: str):
 async def get_run_csv(request: Request, run_id: str):
     """Return the CSV report of a run, generating it on first request."""
     run = get_run(request, run_id)
-    path = await in_worker(request, _build_single_report, run, False)
+    # Report building writes into the session directory, so it is serialized
+    # against DELETE /api/session the same way a check is. Costs nothing: the
+    # checker executor is a single worker, so this work is already sequential.
+    async with request.state.session.lock:
+        path = await in_worker(request, _build_single_report, run, False)
     if not path.is_file():
         raise HTTPException(
             status_code=500, detail="The CSV report could not be created"
@@ -1552,6 +1576,13 @@ async def check_batch(
         checkers = await in_worker(
             request, _check_batch, scenario_paths, limits, batch_directory
         )
+        # Same as the single check: the worker writes into the batch directory
+        # after a sweep or an eviction may have dropped the session.
+        if not store.knows(session.session_id):
+            shutil.rmtree(batch_directory, ignore_errors=True)
+            raise HTTPException(
+                status_code=404, detail="The session ended before the check finished"
+            )
 
         rows = []
         for scenario_path, checker in zip(scenario_paths, checkers):
@@ -1615,7 +1646,11 @@ def _build_batch_report(batch, want_pdf):
 async def get_batch_pdf(request: Request, batch_id: str):
     """Return the aggregated PDF report of a batch."""
     batch = get_batch(request, batch_id)
-    path = await in_worker(request, _build_batch_report, batch, True)
+    # Report building writes into the session directory, so it is serialized
+    # against DELETE /api/session the same way a check is. Costs nothing: the
+    # checker executor is a single worker, so this work is already sequential.
+    async with request.state.session.lock:
+        path = await in_worker(request, _build_batch_report, batch, True)
     if not path.is_file():
         raise HTTPException(
             status_code=500, detail="The aggregated PDF could not be created"
@@ -1627,7 +1662,11 @@ async def get_batch_pdf(request: Request, batch_id: str):
 async def get_batch_csv(request: Request, batch_id: str):
     """Return the aggregated CSV report of a batch."""
     batch = get_batch(request, batch_id)
-    path = await in_worker(request, _build_batch_report, batch, False)
+    # Report building writes into the session directory, so it is serialized
+    # against DELETE /api/session the same way a check is. Costs nothing: the
+    # checker executor is a single worker, so this work is already sequential.
+    async with request.state.session.lock:
+        path = await in_worker(request, _build_batch_report, batch, False)
     if not path.is_file():
         raise HTTPException(
             status_code=500, detail="The aggregated CSV could not be created"
@@ -1635,20 +1674,55 @@ async def get_batch_csv(request: Request, batch_id: str):
     return FileResponse(path, media_type="text/csv", filename=path.name)
 
 
+def _forget_unknown_session(request):
+    """
+    Delete the working directory of a session this process does not know.
+
+    A cookie outlives the session it names whenever the process restarted, the
+    TTL swept it, or the request reached a replica that never saw it - and the
+    files are still on disk. Only the cookie value is available at that point,
+    so it is matched against the session id pattern before use: 32 hex
+    characters cannot escape the working root, and an id someone would have to
+    guess is 128 bits wide.
+
+    Args:
+        request: Incoming request.
+    return: True when a directory was removed.
+    """
+    raw_id = request.cookies.get(SESSION_COOKIE_NAME, "")
+    if not SESSION_ID_PATTERN.match(raw_id):
+        return False
+    directory = WORK_ROOT / raw_id
+    if not directory.is_dir():
+        return False
+    shutil.rmtree(directory, ignore_errors=True)
+    return not directory.exists()
+
+
 @app.delete("/api/session")
-def clear_session(request: Request):
+async def clear_session(request: Request):
     """
     Forget everything this browser session uploaded, immediately.
 
     Waiting out the session TTL is the only alternative, which is not much of
     an answer for someone who wants their scenario off the server now.
+
+    The cookie is cleared either way, and the response says whether anything
+    was actually removed rather than reporting success over untouched files.
     """
     session = getattr(request.state, "session", None)
-    if session is None:
-        return {"cleared": False}
-    store.forget(session.session_id)
-    request.state.session = None
-    response = JSONResponse({"cleared": True})
+    if session is not None:
+        # Held across the erase because a check or a report running on the
+        # worker thread writes into this directory and outlives the request
+        # that started it. Without the lock those writes land after rmtree and
+        # re-create the very files - the processed scenario copy among them -
+        # that were just deleted.
+        async with session.lock:
+            cleared = store.forget(session.session_id)
+        request.state.session = None
+    else:
+        cleared = _forget_unknown_session(request)
+    response = JSONResponse({"cleared": cleared})
     response.delete_cookie(SESSION_COOKIE_NAME, httponly=True, samesite="lax")
     return response
 

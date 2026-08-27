@@ -113,8 +113,16 @@ def create_report_single(checker, title, out_path):
                     "swimangle_errors": swimangle_errors,
                     "swimangle_warnings": swimangle_warnings,
                 }
-                # Render plots into a temporary directory before embedding in the PDF.
-                temp_dir = tempfile.TemporaryDirectory()
+                # Render plots into a temporary directory before embedding in
+                # the PDF. It goes *inside* the checker's working directory, not
+                # the system temp root: these PNGs are drawn from the uploaded
+                # trajectories, and the web application erases a session by
+                # removing its working directory. A sibling of that directory
+                # would survive "Delete my uploads now".
+                temp_root = getattr(checker, "work_dir", None)
+                if temp_root is not None:
+                    Path(temp_root).mkdir(parents=True, exist_ok=True)
+                temp_dir = tempfile.TemporaryDirectory(dir=temp_root)
                 temp_dir_path = Path(temp_dir.name)
                 plot_dynamics(checker, analyzed_dynamics, output_dir=temp_dir_path)
 

@@ -1707,7 +1707,7 @@ wheels = [
 
 [[package]]
 name = "scenario-quality-checker"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -1745,7 +1745,7 @@ web = [
 
 [package.metadata]
 requires-dist = [
-    { name = "click", marker = "python_full_version >= '3.10'", specifier = ">=8.3.3" },
+    { name = "click", specifier = ">=8.3.3" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115" },
     { name = "fpdf2", specifier = ">=2.8.1" },

@@ -688,7 +688,8 @@ class FileQualityChecker:
             # If anything goes wrong while tweaking RoadNetwork, fall back to
             # the plain copied scenario file - but say so, because a silent
             # fallback here shows up much later as unresolvable paths.
-            logger.debug(f"Kept the unmodified scenario copy for esmini: {exc}")
+            if self.print_log:
+                logger.debug(f"Kept the unmodified scenario copy for esmini: {exc}")
 
         log_file = tmp_root / f"esmini_log_{run_token}.csv"
 
@@ -711,10 +712,11 @@ class FileQualityChecker:
         )
 
         if result.returncode != 0:
-            logger.error(
-                f"esmini command failed with exit code {result.returncode} "
-                f"while running {scenario_tmp}"
-            )
+            if self.print_log:
+                logger.error(
+                    f"esmini command failed with exit code {result.returncode} "
+                    f"while running {scenario_tmp}"
+                )
             raise RuntimeError(
                 f"Simulator command failed with exit code {result.returncode}"
             )
@@ -1259,7 +1261,7 @@ class FileQualityChecker:
             for act in story.acts:
                 for maneuvergroup in act.maneuvergroup:
                     actors = [actor.entity for actor in maneuvergroup.actors.actors]
-                    if len(actors) > 1:
+                    if len(actors) > 1 and self.print_log:
                         logger.warning(
                             f"Multiple actors in maneuver group; applying add/remove events to all actors: {actors}"
                         )
@@ -1274,18 +1276,20 @@ class FileQualityChecker:
                                 elif "Remove_" in event.name:
                                     removed_entities.append(actor)
 
-        if len(set(added_entities)) != len(added_entities):
-            logger.warning("Duplicate Add_ events detected for one or more entities.")
-        if len(set(removed_entities)) != len(removed_entities):
-            logger.warning(
-                "Duplicate Remove_ events detected for one or more entities."
-            )
+        if self.print_log:
+            if len(set(added_entities)) != len(added_entities):
+                logger.warning(
+                    "Duplicate Add_ events detected for one or more entities."
+                )
+            if len(set(removed_entities)) != len(removed_entities):
+                logger.warning(
+                    "Duplicate Remove_ events detected for one or more entities."
+                )
 
         return list(set(added_entities)), list(set(removed_entities))
 
-    @staticmethod
     def _check_in_out_entities(
-        init_positions, parked_entities, added_entities, removed_entities
+        self, init_positions, parked_entities, added_entities, removed_entities
     ):
         """
         Check if initialized + added equals removed + parked.
@@ -1297,12 +1301,15 @@ class FileQualityChecker:
         return: List of missing entities.
         """
         # The accounting should balance; otherwise report missing entities.
-        if set(added_entities).intersection(set(list(init_positions.keys()))):
-            logger.warning("Entities appear both in init positions and Add_ events.")
-        if set(removed_entities).intersection(set(parked_entities)):
-            logger.warning(
-                "Entities appear both in Remove_ events and parked entities."
-            )
+        if self.print_log:
+            if set(added_entities).intersection(set(list(init_positions.keys()))):
+                logger.warning(
+                    "Entities appear both in init positions and Add_ events."
+                )
+            if set(removed_entities).intersection(set(parked_entities)):
+                logger.warning(
+                    "Entities appear both in Remove_ events and parked entities."
+                )
 
         missing_in = []
 

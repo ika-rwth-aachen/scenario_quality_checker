@@ -3,10 +3,13 @@
 import csv
 import io
 import shutil
+import threading
 import time
 import zipfile
+from pathlib import Path
 
 import pytest
+from loguru import logger
 
 from conftest import created, upload
 
@@ -193,6 +196,275 @@ def test_clearing_a_session_removes_its_files(client, example):
     assert not (WORK_ROOT / session_id).exists()
     assert "sqc_session" not in client.cookies
     assert client.get(f"/api/runs/{result['run_id']}").status_code == 404
+
+
+def test_deleting_without_a_session_reports_that_nothing_was_removed(client):
+    """Claiming a deletion that did not happen is worse than saying so."""
+    assert client.delete("/api/session").json() == {"cleared": False}
+
+
+def test_the_erase_button_reports_both_outcomes(client):
+    """The page must have wording for an empty session, not only a full one."""
+    body = client.get("/assets/app.js").text
+
+    assert "Your uploads and reports have been deleted." in body
+    assert "There was nothing left to delete." in body
+
+
+def test_deleting_removes_files_left_by_a_forgotten_session(client, example):
+    """
+    A cookie outlives the session it names after a restart or a TTL sweep.
+
+    The files are still on disk at that point, so the button has to act on the
+    cookie value rather than reporting success over untouched uploads.
+    """
+    from quality_checker.webapp.server import WORK_ROOT, store
+
+    created(
+        client.post("/api/checks", files=upload(example("envelope_file_error_1.xosc")))
+    )
+    session_id = client.cookies["sqc_session"]
+    # Whatever dropped the session - a restart, the sweep - the directory stays.
+    store._sessions.pop(session_id)
+    assert (WORK_ROOT / session_id).is_dir()
+
+    assert client.delete("/api/session").json() == {"cleared": True}
+
+    assert not (WORK_ROOT / session_id).exists()
+    assert "sqc_session" not in client.cookies
+
+
+def test_deleting_during_a_check_leaves_nothing_behind(client, example, monkeypatch):
+    """
+    The worker writes into the session directory after rmtree would have run.
+
+    Without the lock the check re-creates the directory to hold the processed
+    scenario copy - the whole scenario text - and the erase silently undoes
+    itself.
+    """
+    from quality_checker.webapp import server
+
+    created(
+        client.post("/api/checks", files=upload(example("envelope_file_error_1.xosc")))
+    )
+    session_id = client.cookies["sqc_session"]
+
+    started = threading.Event()
+    release = threading.Event()
+    original = server._check_scenario
+
+    def blocking(scenario_path, limits, run_directory):
+        started.set()
+        assert release.wait(30)
+        return original(scenario_path, limits, run_directory)
+
+    monkeypatch.setattr(server, "_check_scenario", blocking)
+
+    def run_check():
+        client.post("/api/checks", files=upload(example("envelope_file_error_1.xosc")))
+
+    deleted = {}
+
+    def run_delete():
+        deleted.update(client.delete("/api/session").json())
+
+    checking = threading.Thread(target=run_check)
+    checking.start()
+    assert started.wait(30)
+    deleting = threading.Thread(target=run_delete)
+    deleting.start()
+    # Long enough for the delete to reach the lock the check is holding.
+    time.sleep(0.5)
+    release.set()
+    checking.join(30)
+    deleting.join(30)
+
+    assert deleted == {"cleared": True}
+    assert not (server.WORK_ROOT / session_id).exists()
+
+
+def test_deleting_during_a_report_download_leaves_nothing_behind(
+    client, example, monkeypatch
+):
+    """
+    A report download is the case no after-the-fact guard catches.
+
+    The checker stays in memory for the whole download, so without the lock the
+    builder happily re-creates the deleted directory and writes a PDF of the
+    scenario back into it.
+    """
+    from quality_checker.webapp import server
+
+    result = created(
+        client.post("/api/checks", files=upload(example("envelope_file_error_1.xosc")))
+    )
+    session_id = client.cookies["sqc_session"]
+
+    started = threading.Event()
+    release = threading.Event()
+    original = server._build_single_report
+
+    def blocking(run, want_pdf):
+        started.set()
+        assert release.wait(30)
+        return original(run, want_pdf)
+
+    monkeypatch.setattr(server, "_build_single_report", blocking)
+
+    def run_download():
+        client.get(f"/api/runs/{result['run_id']}/report.pdf")
+
+    deleted = {}
+
+    def run_delete():
+        deleted.update(client.delete("/api/session").json())
+
+    downloading = threading.Thread(target=run_download)
+    downloading.start()
+    assert started.wait(30)
+    deleting = threading.Thread(target=run_delete)
+    deleting.start()
+    # Long enough for the delete to reach the lock the download is holding.
+    time.sleep(0.5)
+    release.set()
+    downloading.join(30)
+    deleting.join(30)
+
+    assert deleted == {"cleared": True}
+    assert not (server.WORK_ROOT / session_id).exists()
+
+
+def test_reports_are_built_under_the_session_lock(client, example, monkeypatch):
+    """A report download recreates the session directory just like a check does."""
+    from quality_checker.webapp import server
+
+    result = created(
+        client.post("/api/checks", files=upload(example("envelope_file_error_1.xosc")))
+    )
+    held = []
+    original = server._build_single_report
+
+    def recording(run, want_pdf):
+        held.append(server.store._sessions[run.session_id].lock.locked())
+        return original(run, want_pdf)
+
+    monkeypatch.setattr(server, "_build_single_report", recording)
+
+    assert client.get(f"/api/runs/{result['run_id']}/report.csv").status_code == 200
+    assert held == [True]
+
+
+def test_pdf_plots_are_rendered_inside_the_session_directory(
+    client, example, monkeypatch
+):
+    """
+    Plots drawn for the PDF are made of the uploaded trajectories.
+
+    Rendered into the system temp root they would be a sibling of the session
+    directory, and "Delete my uploads now" removes only the directory.
+    """
+    from quality_checker import pdf_report_creator
+    from quality_checker.webapp.server import WORK_ROOT
+
+    result = created(
+        client.post("/api/checks", files=upload(example("envelope_file_error_1.xosc")))
+    )
+    session_id = client.cookies["sqc_session"]
+
+    rendered = []
+    original = pdf_report_creator.plot_dynamics
+
+    def recording(checker, analyzed_dynamics, **kwargs):
+        rendered.append(Path(kwargs["output_dir"]))
+        return original(checker, analyzed_dynamics, **kwargs)
+
+    monkeypatch.setattr(pdf_report_creator, "plot_dynamics", recording)
+
+    assert client.get(f"/api/runs/{result['run_id']}/report.pdf").status_code == 200
+
+    assert rendered, "the PDF did not render any plots"
+    for output_dir in rendered:
+        assert WORK_ROOT / session_id in output_dir.parents
+
+
+def _captured_log():
+    """Collect every loguru record emitted inside the with-block."""
+    import contextlib
+
+    @contextlib.contextmanager
+    def capture(records):
+        handler = logger.add(records.append, level="DEBUG")
+        try:
+            yield
+        finally:
+            logger.remove(handler)
+
+    return capture
+
+
+def test_checking_a_scenario_writes_nothing_to_the_log(client, example):
+    """
+    data_privacy.md promises file contents never reach the application log.
+
+    A clean check has nothing to say, and a log line cannot be taken back by
+    any delete button - so the bar here is silence, not redaction.
+    """
+    records = []
+    with _captured_log()(records):
+        result = created(
+            client.post(
+                "/api/checks", files=upload(example("envelope_file_error_1.xosc"))
+            )
+        )
+        assert client.get(f"/api/runs/{result['run_id']}/report.pdf").status_code == 200
+
+    assert records == []
+
+
+def test_failed_plot_rendering_keeps_the_upload_out_of_the_log(
+    client, example, monkeypatch
+):
+    """The one warning a check can emit must not name the file or the session."""
+    from quality_checker import pdf_report_creator
+
+    def failing(*args, **kwargs):
+        raise RuntimeError("no plot for you")
+
+    monkeypatch.setattr(pdf_report_creator, "plot_dynamics", failing)
+
+    records = []
+    with _captured_log()(records):
+        created(
+            client.post(
+                "/api/checks", files=upload(example("envelope_file_error_1.xosc"))
+            )
+        )
+        session_id = client.cookies["sqc_session"]
+
+    written = "".join(str(record) for record in records)
+
+    assert "Could not render plots" in written, "the warning under test never fired"
+    assert "envelope_file_error_1" not in written
+    assert session_id not in written
+    assert "no plot for you" not in written
+
+
+def test_a_missing_trace_keeps_the_entity_name_out_of_the_log():
+    """The entity name comes from the uploaded scenario, so it is not loggable."""
+    from quality_checker.webapp.results import dynamic_peak
+
+    class Broken:
+        def entity_dynamics(self, entity_name):
+            raise KeyError(entity_name)
+
+    records = []
+    with _captured_log()(records):
+        assert dynamic_peak(Broken(), "ego_vehicle_1", "acceleration") is None
+
+    written = "".join(str(record) for record in records)
+
+    assert "No acceleration trace" in written, "the debug line under test never fired"
+    assert "ego_vehicle_1" not in written
 
 
 def test_valid_scenario_reports_no_issues(client, example):

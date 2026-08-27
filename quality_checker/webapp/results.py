@@ -72,7 +72,10 @@ def dynamic_peak(checker, entity_name, metric_name):
     except Exception as exc:  # noqa: BLE001 - trace details are a nice-to-have.
         # Logged rather than swallowed: a refactor of the checker would
         # otherwise degrade the web output with no signal at all.
-        logger.debug(f"No {metric_name} trace for {entity_name}: {exc}")
+        # The entity name comes from the uploaded scenario and the exception
+        # text may repeat it, so neither is logged; the metric and the
+        # exception type are enough to notice a broken checker contract.
+        logger.debug(f"No {metric_name} trace available: {type(exc).__name__}")
         return None
 
 
