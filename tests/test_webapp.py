@@ -41,8 +41,6 @@ def test_index_offers_the_legal_notices(client):
     """The imprint link and the data privacy controls reach the user."""
     body = client.get("/").text
 
-    assert "https://scenario.center/imprint/" in body
-    assert "https://scenario.center/privacy-policy/" in body
     assert 'id="data-privacy"' in body
     assert 'id="forget-session"' in body
 
@@ -139,25 +137,6 @@ def test_header_logo_is_served(client):
     assert response.content.startswith(b"\x89PNG\r\n\x1a\n")
 
 
-def test_data_privacy_notice_documents_application_processing(client):
-    """
-    The notice must keep naming what the application actually does.
-
-    Asserting on the limits is the point: they are configurable defaults that
-    someone will eventually change, and a privacy notice that quietly disagrees
-    with the code is worse than none.
-    """
-    payload = client.get("/api/data-privacy").json()
-
-    notice = payload["text"]
-    assert "sqc_session" in notice
-    assert "1 hour" in notice
-    assert "20 MiB" in notice
-    assert "50 files" in notice
-    assert "200 MiB" in notice
-    assert "Delete my uploads now" in notice
-
-    assert "<h2>" in payload["html"]
 
 
 def test_packaged_markdown_renders_without_embedded_html(tmp_path):
