@@ -61,9 +61,9 @@ not a defect of the example.
 
 ## Checking several scenarios at once
 
-The **Batch** tab takes several `.xosc` files or one `.zip` archive - at most 50 files, and
-an archive may expand to at most 200 MiB. Every `.xosc` in the selection is checked and
-summarised in one table.
+The **Batch** tab takes several `.xosc` files and at most one `.zip` archive - at most 50
+files in total, and the archive may expand to at most 200 MiB. A selection holding a second
+archive is refused. Every `.xosc` in the selection is checked and summarised in one table.
 
 The table repeats the stages as columns. A `-` in the error or warning columns means the
 stage was never reached because an earlier one failed. Selecting a row opens the full

@@ -786,6 +786,28 @@ def test_batch_accepts_a_zip_archive(client, example):
     assert sorted(row["file_name"] for row in batch["files"]) == sorted(BATCH_NAMES)
 
 
+def test_batch_accepts_an_archive_alongside_loose_files(client, example):
+    """One archive may be mixed with plain uploads; only a second one is refused."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            f"nested/{BATCH_NAMES[0]}", example(BATCH_NAMES[0]).read_bytes()
+        )
+    buffer.seek(0)
+
+    batch = created(
+        client.post(
+            "/api/batches",
+            files=[
+                ("scenarios", ("pack.zip", buffer.read(), "application/zip")),
+                *batch_files(example, BATCH_NAMES[1:]),
+            ],
+        )
+    )
+
+    assert sorted(row["file_name"] for row in batch["files"]) == sorted(BATCH_NAMES)
+
+
 def test_zip_path_traversal_is_refused(client):
     """Archive members must stay inside the upload directory."""
     buffer = io.BytesIO()

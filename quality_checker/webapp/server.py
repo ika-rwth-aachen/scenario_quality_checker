@@ -127,9 +127,10 @@ RUN_TIMEOUT_SECONDS = int_from_environment("SQC_RUN_TIMEOUT_SECONDS", 120)
 # everybody behind it; shedding load with 503 keeps the service answering.
 MAX_QUEUED_CHECKS = int_from_environment("SQC_MAX_QUEUED_CHECKS", 8)
 
-# An absolute ceiling on a request body. The per-file limit multiplied by the
-# batch limit is around a gigabyte with the defaults, which is far more than
-# any real batch and far more than the container has memory for.
+# An absolute ceiling on a request body, enforced by RequestSizeLimit against
+# the bytes actually received. The per-file limit multiplied by the batch limit
+# is around a gigabyte with the defaults, which is far more than any real batch
+# and far more than the container has memory for.
 MAX_REQUEST_BYTES = min(
     int_from_environment("SQC_MAX_REQUEST_BYTES", 256 * 1024 * 1024),
     MAX_UPLOAD_BYTES * (MAX_BATCH_FILES + 1),
@@ -509,7 +510,15 @@ RATE_LIMITED_PATHS = ("/api/checks", "/api/batches")
 
 
 class RequestBudget:
-    """Total number of bytes a single request is allowed to write to disk."""
+    """
+    Total number of bytes a single request is allowed to write to disk.
+
+    RequestSizeLimit already bounds what arrives on the wire. This bounds what
+    is decoded out of it and summed across the files of one request, so a
+    request cannot spend its whole ceiling on one file and then keep going.
+    The two counters share a limit but never a total: feeding wire bytes into
+    this one would count the same upload twice.
+    """
 
     def __init__(self, limit=None):
         self.limit = MAX_REQUEST_BYTES if limit is None else limit
@@ -572,6 +581,107 @@ def audit(request, event, detail=""):
     )
 
 
+class RequestSizeLimit:
+    """
+    Enforce MAX_REQUEST_BYTES on the bytes actually received, not the header.
+
+    Content-Length is a claim the client makes, and a chunked request simply
+    omits it. Checking only the header therefore leaves the ceiling
+    unenforced for exactly the caller who is trying to get past it.
+
+    Counting has to happen here rather than in the endpoint, because the
+    endpoint runs too late: resolving its UploadFile and Form parameters makes
+    Starlette parse the whole multipart body first, holding form fields in
+    memory and spooling every file part to a temporary file. By the time
+    store_upload() spends its first byte of RequestBudget the request has
+    already been materialised in full. Wrapping receive() is the only place
+    that sees the body while it is still arriving.
+
+    This is plain ASGI rather than an @app.middleware("http") function because
+    BaseHTTPMiddleware hands its callable a Request, not the receive channel
+    the counting has to hook into.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope)
+        limit = MAX_REQUEST_BYTES
+
+        # A body that announces itself as too large is refused without reading
+        # any of it. Only a hint - the counting below is the enforcement.
+        declared = request.headers.get("content-length")
+        if declared and declared.isdigit() and int(declared) > limit:
+            audit(request, "request_too_large", f"declared={declared}")
+            await self._refuse(limit, scope, receive, send)
+            return
+
+        state = {"received": 0, "exceeded": False, "started": False}
+
+        async def counting_receive():
+            """Pass the body through, cutting it off once it outgrows the limit."""
+            if state["exceeded"]:
+                return {"type": "http.disconnect"}
+            message = await receive()
+            if message["type"] == "http.request":
+                state["received"] += len(message.get("body", b""))
+                if state["received"] > limit:
+                    state["exceeded"] = True
+                    # Reporting a disconnect rather than raising: FastAPI wraps
+                    # form parsing in a broad 'except Exception' and would turn
+                    # any exception raised here into its own 400, so the
+                    # rejection would never reach this middleware. A disconnect
+                    # stops the parser just as promptly and cannot be mistaken
+                    # for a malformed upload.
+                    return {"type": "http.disconnect"}
+            return message
+
+        async def guarded_send(message):
+            """Suppress the inner response once the request has been refused."""
+            if state["exceeded"]:
+                # The application is answering a request that has been cut off
+                # mid-body, so whatever it decided - FastAPI's "error parsing
+                # the body" - describes our own truncation, not the upload.
+                return
+            if message["type"] == "http.response.start":
+                state["started"] = True
+            await send(message)
+
+        try:
+            await self.app(scope, counting_receive, guarded_send)
+        except Exception:
+            # A disconnect this middleware caused surfaces as ClientDisconnect
+            # on any endpoint that reads the body directly. Anything raised for
+            # a request that stayed within its budget is a real failure.
+            if not state["exceeded"]:
+                raise
+
+        if not state["exceeded"]:
+            return
+
+        audit(request, "request_too_large", f"received={state['received']}")
+        if state["started"]:
+            # The status line is already on the wire, so it cannot be replaced.
+            # The body was still cut off, which is what the limit is for.
+            audit(request, "request_too_large", "stage=response_started")
+            return
+        await self._refuse(limit, scope, receive, send)
+
+    @staticmethod
+    async def _refuse(limit, scope, receive, send):
+        """Send the 413 both rejection paths share, so they read alike."""
+        response = JSONResponse(
+            {"detail": f"Request body exceeds the {limit} byte limit"},
+            status_code=413,
+        )
+        await response(scope, receive, send)
+
+
 # ---------------------------------------------------------------------------
 # Upload handling
 # ---------------------------------------------------------------------------
@@ -616,8 +726,8 @@ async def store_upload(upload, destination, max_bytes=None, budget=None):
         max_bytes: Maximum accepted size, defaults to MAX_UPLOAD_BYTES. Read at
             call time so the limit stays configurable.
         budget: Optional RequestBudget counting bytes across every file of the
-            request, so a chunked body that omits Content-Length cannot get
-            past the per-request ceiling by splitting itself up.
+            request, so a request cannot spend its whole ceiling on one file
+            and then upload more.
     return: Number of bytes written.
     raises HTTPException: 413 when the upload is too large.
     """
@@ -1007,34 +1117,32 @@ async def bind_session(request, call_next):
 
 
 @app.middleware("http")
-async def throttle_and_limit_size(request, call_next):
-    """Refuse abusive or oversized requests before reading the body."""
-    if request.method == "POST":
-        declared = request.headers.get("content-length")
-        if declared and declared.isdigit() and int(declared) > MAX_REQUEST_BYTES:
-            audit(request, "request_too_large", f"declared={declared}")
+async def throttle_requests(request, call_next):
+    """Refuse abusive requests before they reach the analysis worker."""
+    if request.method == "POST" and request.url.path in RATE_LIMITED_PATHS:
+        client = request.client.host if request.client else None
+        if not rate_limiter.allow(client):
+            audit(request, "rate_limited", f"path={request.url.path}")
             return JSONResponse(
-                {"detail": f"Request body exceeds the {MAX_REQUEST_BYTES} byte limit"},
-                status_code=413,
+                {
+                    "detail": (
+                        "Too many checks from this address. "
+                        f"At most {RATE_LIMIT_REQUESTS} per "
+                        f"{RATE_LIMIT_WINDOW_SECONDS} seconds."
+                    )
+                },
+                status_code=429,
+                headers={"Retry-After": str(RATE_LIMIT_WINDOW_SECONDS)},
             )
 
-        if request.url.path in RATE_LIMITED_PATHS:
-            client = request.client.host if request.client else None
-            if not rate_limiter.allow(client):
-                audit(request, "rate_limited", f"path={request.url.path}")
-                return JSONResponse(
-                    {
-                        "detail": (
-                            "Too many checks from this address. "
-                            f"At most {RATE_LIMIT_REQUESTS} per "
-                            f"{RATE_LIMIT_WINDOW_SECONDS} seconds."
-                        )
-                    },
-                    status_code=429,
-                    headers={"Retry-After": str(RATE_LIMIT_WINDOW_SECONDS)},
-                )
-
     return await call_next(request)
+
+
+# Sits outside the throttle and the session binding, so the body of a request
+# that is too large is cut off before anything else looks at it, and no session
+# cookie is minted for a request that was refused. Registered before
+# request_context, which therefore stays outermost and decorates the 413.
+app.add_middleware(RequestSizeLimit)
 
 
 @app.middleware("http")
@@ -1043,7 +1151,8 @@ async def request_context(request, call_next):
     Give every request an identity and every response its security headers.
 
     Registered last, so it is the outermost middleware: a request refused by the
-    throttle below still comes back with the headers and the correlation id.
+    size limit or the throttle below still comes back with the headers and the
+    correlation id.
     """
     request.state.request_id = uuid4().hex[:12]
     request.state.budget = RequestBudget()
@@ -1421,6 +1530,12 @@ def _extract_zip(archive_path, destination, request=None):
     """
     Extract the scenario and map files from an uploaded archive.
 
+    The expansion budget is per call, so MAX_ZIP_UNCOMPRESSED_BYTES only bounds
+    what a whole request writes because check_batch() accepts at most one
+    archive. Anything that re-admits several archives per request has to share
+    one budget across them instead, or a handful of small uploads expands to
+    more than the container has room for.
+
     Args:
         archive_path: Path to the uploaded .zip.
         destination: Directory to extract into.
@@ -1530,6 +1645,22 @@ async def check_batch(
         raise HTTPException(
             status_code=400,
             detail=f"At most {MAX_BATCH_FILES} files can be checked at once",
+        )
+
+    # _extract_zip() budgets one archive at a time, so several archives in one
+    # request would each get a fresh MAX_ZIP_UNCOMPRESSED_BYTES and together
+    # expand to far more than the container can hold - while the request itself
+    # stays well inside the compressed body limit. Refusing the second archive
+    # is what makes that per-archive budget the per-request budget, and it is
+    # the mode the interface has always documented.
+    archives = [
+        upload for upload in uploads if Path(upload.filename).suffix.lower() == ".zip"
+    ]
+    if len(archives) > 1:
+        audit(request, "multiple_archives", f"count={len(archives)}")
+        raise HTTPException(
+            status_code=400,
+            detail="At most one .zip archive can be checked at once",
         )
 
     session = create_session(request)

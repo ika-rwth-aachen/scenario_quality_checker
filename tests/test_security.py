@@ -114,6 +114,33 @@ def test_extraction_stops_at_the_budget_whatever_the_header_claims(tmp_path):
     assert target.stat().st_size <= 1024 + 1024 * 1024
 
 
+def test_only_one_archive_is_accepted_per_request(client, monkeypatch):
+    """
+    A second archive would get its own expansion budget, so it is refused.
+
+    Extraction budgets one archive at a time. Several archives in one request
+    therefore each expand up to MAX_ZIP_UNCOMPRESSED_BYTES - together far more
+    than the container holds - while the compressed request stays small enough
+    to pass every other limit. Only the file count bounds the archives, and it
+    is checked after everything is already unpacked.
+    """
+    from quality_checker.webapp import server
+
+    monkeypatch.setattr(server, "MAX_ZIP_UNCOMPRESSED_BYTES", 64 * 1024)
+    payload = b"\0" * (4 * 1024 * 1024)
+
+    response = client.post(
+        "/api/batches",
+        files=[
+            ("scenarios", ("one.zip", zip_of({"a.xosc": payload}), "application/zip")),
+            ("scenarios", ("two.zip", zip_of({"b.xosc": payload}), "application/zip")),
+        ],
+    )
+
+    assert response.status_code == 400
+    assert "one .zip" in response.json()["detail"]
+
+
 def test_zip_compression_bomb_is_refused(client, monkeypatch):
     """A member expanding far past its compressed size is a bomb, not a scenario."""
     from quality_checker.webapp import server
@@ -312,10 +339,12 @@ async def _store(upload, destination, budget):
 
 def test_total_request_bytes_are_capped_while_streaming(tmp_path):
     """
-    The ceiling must hold even when Content-Length never arrives.
+    One request cannot exceed the ceiling by spreading itself over files.
 
-    A chunked request simply omits the header, which skips the check that reads
-    it; only counting the bytes as they are read closes that off.
+    This is the decoded-byte half of the limit, checked while the file is
+    written. The wire-byte half - which is what a chunked body without a
+    Content-Length gets past - belongs to RequestSizeLimit and is covered by
+    the chunked tests below and in test_request_limits.py.
     """
     import asyncio
 
@@ -333,6 +362,124 @@ def test_total_request_bytes_are_capped_while_streaming(tmp_path):
 
     assert raised.value.status_code == 413
     assert not (tmp_path / "out.xosc").exists()
+
+
+MULTIPART_BOUNDARY = "----scenario-quality-checker-test"
+MULTIPART_CONTENT_TYPE = f"multipart/form-data; boundary={MULTIPART_BOUNDARY}"
+
+
+def multipart_body(payload, filename="big.xosc", field="scenario"):
+    """Build a multipart body by hand, so the transfer encoding stays ours."""
+    return (
+        (
+            f"--{MULTIPART_BOUNDARY}\r\n"
+            f'Content-Disposition: form-data; name="{field}"; filename="{filename}"\r\n'
+            f"Content-Type: application/xml\r\n\r\n"
+        ).encode()
+        + payload
+        + f"\r\n--{MULTIPART_BOUNDARY}--\r\n".encode()
+    )
+
+
+def multipart_field(payload, field="example"):
+    """
+    Build a multipart body holding one plain form field.
+
+    A field is not a file, so it never reaches store_upload and the per-file
+    budget never sees it. Starlette holds it in memory in full, which makes it
+    the honest way to ask whether the request was stopped before it was parsed.
+    """
+    return (
+        (
+            f"--{MULTIPART_BOUNDARY}\r\n"
+            f'Content-Disposition: form-data; name="{field}"\r\n\r\n'
+        ).encode()
+        + payload
+        + f"\r\n--{MULTIPART_BOUNDARY}--\r\n".encode()
+    )
+
+
+def in_chunks(body, size=8192):
+    """Yield a body piecewise, which makes httpx send it without a length."""
+    for start in range(0, len(body), size):
+        yield body[start : start + size]
+
+
+def test_a_declared_oversize_body_is_refused(client, monkeypatch):
+    """A request announcing more than the ceiling is refused before it is read."""
+    from quality_checker.webapp import server
+
+    monkeypatch.setattr(server, "MAX_REQUEST_BYTES", 4096)
+
+    response = client.post(
+        "/api/checks",
+        content=multipart_body(b"x" * (64 * 1024)),
+        headers={"content-type": MULTIPART_CONTENT_TYPE},
+    )
+
+    assert response.status_code == 413
+    assert "byte limit" in response.json()["detail"]
+
+
+def test_a_chunked_body_is_capped_without_a_content_length(client, monkeypatch):
+    """
+    The ceiling must hold for a body that never declares its size.
+
+    Handing httpx an iterator makes it send Transfer-Encoding: chunked and omit
+    Content-Length, so the header check cannot fire. The payload is a form
+    field rather than a file, which is what makes this test mean something: a
+    field never reaches the per-file budget, so nothing but the size limit
+    stands between an anonymous caller and a body held in memory in full.
+    """
+    from quality_checker.webapp import server
+
+    monkeypatch.setattr(server, "MAX_REQUEST_BYTES", 4096)
+
+    response = client.post(
+        "/api/checks",
+        content=in_chunks(multipart_field(b"x" * (64 * 1024))),
+        headers={"content-type": MULTIPART_CONTENT_TYPE},
+    )
+
+    assert response.status_code == 413
+    assert "byte limit" in response.json()["detail"]
+    # The refusal is emitted inside the outermost middleware, so it is still a
+    # fully formed response rather than a bare status line.
+    assert response.headers["x-request-id"]
+    assert "frame-ancestors 'none'" in response.headers["content-security-policy"]
+
+
+def test_a_chunked_body_within_the_limit_still_works(client, example):
+    """Counting the body must not break an ordinary upload that fits."""
+    scenario = example("envelope_xsd_valid_v1-2.xosc")
+
+    result = created(
+        client.post(
+            "/api/checks",
+            content=in_chunks(
+                multipart_body(scenario.read_bytes(), filename=scenario.name)
+            ),
+            headers={"content-type": MULTIPART_CONTENT_TYPE},
+        )
+    )
+
+    assert result["file_name"] == scenario.name
+
+
+def test_a_refused_body_never_mints_a_session(client, monkeypatch):
+    """A request that was cut off must not leave state behind."""
+    from quality_checker.webapp import server
+
+    monkeypatch.setattr(server, "MAX_REQUEST_BYTES", 4096)
+    before = len(server.store._sessions)
+
+    client.post(
+        "/api/checks",
+        content=in_chunks(multipart_field(b"x" * (64 * 1024))),
+        headers={"content-type": MULTIPART_CONTENT_TYPE},
+    )
+
+    assert len(server.store._sessions) == before
 
 
 def test_health_does_not_advertise_the_version(client):

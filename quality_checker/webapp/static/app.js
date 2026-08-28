@@ -341,6 +341,13 @@ async function submitBatch() {
     error.control = $("#batch-input");
     throw error;
   }
+  /* The server refuses this too; saying so here saves uploading both archives
+     first only to be turned away. */
+  if (Array.from(files).filter((file) => file.name.toLowerCase().endsWith(".zip")).length > 1) {
+    const error = new Error("Choose at most one .zip archive.");
+    error.control = $("#batch-input");
+    throw error;
+  }
 
   const data = new FormData();
   Array.from(files).forEach((file) => data.append("scenarios", file));
