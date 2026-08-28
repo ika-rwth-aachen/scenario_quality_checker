@@ -1046,7 +1046,7 @@ async def application_lifespan(app):
 
 
 app = FastAPI(
-    title="scenario-quality-checker", version="0.2.0", lifespan=application_lifespan
+    title="scenario-quality-checker", version="0.3.0", lifespan=application_lifespan
 )
 
 STATIC_DIRECTORY.mkdir(parents=True, exist_ok=True)
