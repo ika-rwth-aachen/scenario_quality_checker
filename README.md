@@ -7,7 +7,7 @@
 [![tests](https://github.com/ika-rwth-aachen/scenario_quality_checker/actions/workflows/ci.yml/badge.svg)](https://github.com/ika-rwth-aachen/scenario_quality_checker/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-![version](https://img.shields.io/badge/version-0.2.0-informational)
+![version](https://img.shields.io/badge/version-0.3.0-informational)
 
 ## Why use this
 
@@ -154,23 +154,7 @@ session affinity, TLS and the imprint duty are requirements, not suggestions.
 3. **Consistency checks** — undefined entities, overlapping start positions, unmatched add/remove events.
 4. **Dynamics checks** — acceleration and sideslip peaks against the configured limits.
 
-Each stage runs only if the previous one passed. The full description is in
-[Architecture](https://github.com/ika-rwth-aachen/scenario_quality_checker/blob/main/docs/architecture.md).
-
-## Documentation
-
-| Document | Contents |
-| --- | --- |
-| [CLI reference](https://github.com/ika-rwth-aachen/scenario_quality_checker/blob/main/docs/cli-reference.md) | Every command-line option, defaults, and worked examples |
-| [Reports](https://github.com/ika-rwth-aachen/scenario_quality_checker/blob/main/docs/reports.md) | Output locations, the two CSV formats, exit codes |
-| [Web interface](https://github.com/ika-rwth-aachen/scenario_quality_checker/blob/main/docs/web-interface.md) | Features, HTTP API, environment variables |
-| [Deployment](https://github.com/ika-rwth-aachen/scenario_quality_checker/blob/main/docs/deployment.md) | Hardening, session affinity, legal notices |
-| [Architecture](https://github.com/ika-rwth-aachen/scenario_quality_checker/blob/main/docs/architecture.md) | The check pipeline, stage by stage |
-| [Development and contributing](https://github.com/ika-rwth-aachen/scenario_quality_checker/blob/main/docs/contributing.md) | Test suite, linting, how to open a good PR |
-
-Three further Markdown files are served by the running web app itself — the in-app
-[Help](quality_checker/webapp/help.md), [About](quality_checker/webapp/about.md) and
-[Data privacy](quality_checker/webapp/data_privacy.md) dialogs.
+Each stage runs only if the previous one passed.
 
 ## Development
 
