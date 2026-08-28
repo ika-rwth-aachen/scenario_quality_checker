@@ -137,8 +137,6 @@ def test_header_logo_is_served(client):
     assert response.content.startswith(b"\x89PNG\r\n\x1a\n")
 
 
-
-
 def test_packaged_markdown_renders_without_embedded_html(tmp_path):
     """
     The renderer must neutralise HTML and send links away safely.
