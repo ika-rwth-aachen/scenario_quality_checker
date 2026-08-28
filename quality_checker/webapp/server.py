@@ -1690,6 +1690,11 @@ async def check_batch(
                     audit(request, "rejected_suffix", "field=scenarios")
                     raise
                 target = inputs / safe_upload_name(upload.filename)
+                if target.exists():
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Duplicate batch filename '{target.name}'",
+                    )
                 await store_upload(upload, target, budget=budget)
                 if target.suffix.lower() in ALLOWED_SCENARIO_SUFFIXES:
                     scenario_paths.append(target)
