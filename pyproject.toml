@@ -4,36 +4,93 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scenario-quality-checker"
-version = "0.1.0"
+version = "0.3.0"
 description = "Analyze ASAM OpenSCENARIO .xosc files for structural, schema, and motion issues"
 readme = "README.md"
 license = "MIT"
 authors = [
-    {name = "Institute for Automotive Engineering (ika)", email = "info@ika.rwth-aachen.de"}
+    {name = "Christoph Glasmacher", email = "christoph.glasmacher@ika.rwth-aachen.de"},
+    {name = "Sven Tarlowski", email = "sven.tarlowski@ika.rwth-aachen.de"},
+    {name = "ika - RWTH Aachen University", email = "opensource@ika.rwth-aachen.de"}
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
-    "fpdf2==2.8.1",
-    "loguru==0.7.3",
-    "matplotlib==3.9.4",
-    "numpy==2.0.2",
-    "pandas==2.2.3",
+    # Transitive via typer and uvicorn, pinned here because 8.1.8 carries
+    # PYSEC-2026-2132. The fix is published for Python 3.10 and newer, which is
+    # every runtime this package supports, so no environment marker is needed.
+    "click>=8.3.3",
+    "defusedxml>=0.7.1",
+    "fpdf2>=2.8.1",
+    "loguru>=0.7.3",
+    "matplotlib>=3.9.4",
+    "numpy>=2.0.2",
+    "pandas>=2.2.3",
     "scenariogeneration~=0.16.5",
-    "scipy==1.13.1",
-    "shapely==2.0.7",
+    "scipy>=1.13.1",
+    "shapely>=2.0.7",
     "typer>=0.15.2",
-    "xmlschema==3.4.4",
+    "xmlschema>=3.4.4",
+]
+
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    # Renders the packaged data privacy notice. Only the web interface shows
+    # it, so the CLI does not have to carry the dependency.
+    "markdown-it-py>=3.0",
+]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",
+    "ruff>=0.6",
 ]
 
 [project.scripts]
 scenario-quality-checker = "quality_checker.__main__:app"
+scenario-quality-checker-web = "quality_checker.webapp.server:main"
 
 [project.urls]
-Repository = "https://github.com/ika-rwth-aachen/scenario-quality-checker"
+Repository = "https://github.com/ika-rwth-aachen/scenario_quality_checker"
 
 [tool.setuptools.packages.find]
 where = ["."]
-exclude = ["assets", "example_files", "tests*"]
+exclude = ["tests*"]
 
 [tool.setuptools.package-data]
-quality_checker = ["schemas/*.xsd"]
+quality_checker = [
+    "schemas/*.xsd",
+    "webapp/static/*",
+    "webapp/*.md",
+    "example_files/*.xosc",
+    "assets/*",
+]
+
+[tool.ruff]
+# Configured explicitly so the CI gate and a local `ruff check .` agree; without
+# this, whichever rule set a developer's global config happens to enable decides
+# the outcome.
+target-version = "py310"
+exclude = ["build", ".venv", "results"]
+
+[tool.ruff.lint]
+# The ruff defaults plus import sorting. Deliberately not the whole catalogue:
+# a gate is only useful if it passes, and the wider families flag long-standing
+# idioms in this codebase (typer's Option defaults, the star imports below)
+# rather than defects.
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["quality_checker", "conftest"]
+
+[tool.ruff.lint.per-file-ignores]
+# The report modules deliberately re-export through star imports; the CLI needs
+# the matplotlib backend selected before anything imports pyplot.
+"quality_checker/quality_checker.py" = ["F403", "F405"]
+"quality_checker/pdf_report_creator.py" = ["F403", "F405"]
+"quality_checker/__main__.py" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

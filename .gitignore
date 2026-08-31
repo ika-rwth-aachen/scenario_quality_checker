@@ -136,3 +136,7 @@ Thumbs.db
 # Project-specific
 output/
 *.pdf
+reports/
+
+# Working directory of the checker
+results/

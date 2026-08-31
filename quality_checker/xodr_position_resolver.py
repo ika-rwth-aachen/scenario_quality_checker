@@ -1,5 +1,6 @@
 import math
-import xml.etree.ElementTree as ET
+
+from . import safe_xml
 
 
 class OpenDrivePositionResolver:
@@ -64,7 +65,7 @@ class OpenDrivePositionResolver:
             return self._xodr_cache[cache_key]
 
         try:
-            tree = ET.parse(xodr_path)
+            tree = safe_xml.parse(xodr_path)
             root = tree.getroot()
         except Exception:
             self._xodr_cache[cache_key] = None
@@ -72,120 +73,135 @@ class OpenDrivePositionResolver:
 
         roads = {}
         for road in root.iter():
-            if not road.tag.endswith('road'):
+            if not road.tag.endswith("road"):
                 continue
 
-            road_id = str(road.attrib.get('id', ''))
+            road_id = str(road.attrib.get("id", ""))
             try:
-                road_length = float(road.attrib.get('length', 0.0))
+                road_length = float(road.attrib.get("length", 0.0))
             except Exception:
                 road_length = 0.0
 
             plan_view = None
             lanes = None
             for child in road:
-                if child.tag.endswith('planView'):
+                if child.tag.endswith("planView"):
                     plan_view = child
-                elif child.tag.endswith('lanes'):
+                elif child.tag.endswith("lanes"):
                     lanes = child
 
             geometries = []
             if plan_view is not None:
                 for geom in plan_view:
-                    if not geom.tag.endswith('geometry'):
+                    if not geom.tag.endswith("geometry"):
                         continue
                     try:
-                        geom_s = float(geom.attrib.get('s', 0.0))
-                        geom_x = float(geom.attrib.get('x', 0.0))
-                        geom_y = float(geom.attrib.get('y', 0.0))
-                        geom_hdg = float(geom.attrib.get('hdg', 0.0))
-                        geom_len = float(geom.attrib.get('length', 0.0))
+                        geom_s = float(geom.attrib.get("s", 0.0))
+                        geom_x = float(geom.attrib.get("x", 0.0))
+                        geom_y = float(geom.attrib.get("y", 0.0))
+                        geom_hdg = float(geom.attrib.get("hdg", 0.0))
+                        geom_len = float(geom.attrib.get("length", 0.0))
                     except Exception:
                         continue
 
-                    geom_type = 'line'
+                    geom_type = "line"
                     curvature = 0.0
                     for gc in geom:
-                        if gc.tag.endswith('arc'):
-                            geom_type = 'arc'
+                        if gc.tag.endswith("arc"):
+                            geom_type = "arc"
                             try:
-                                curvature = float(gc.attrib.get('curvature', 0.0))
+                                curvature = float(gc.attrib.get("curvature", 0.0))
                             except Exception:
                                 curvature = 0.0
                             break
-                        if gc.tag.endswith('line'):
-                            geom_type = 'line'
+                        if gc.tag.endswith("line"):
+                            geom_type = "line"
                             break
 
                     geometries.append(
                         {
-                            's': geom_s,
-                            'x': geom_x,
-                            'y': geom_y,
-                            'hdg': geom_hdg,
-                            'length': geom_len,
-                            'type': geom_type,
-                            'curvature': curvature,
+                            "s": geom_s,
+                            "x": geom_x,
+                            "y": geom_y,
+                            "hdg": geom_hdg,
+                            "length": geom_len,
+                            "type": geom_type,
+                            "curvature": curvature,
                         }
                     )
-            geometries.sort(key=lambda g: g['s'])
+            geometries.sort(key=lambda g: g["s"])
 
             lane_offsets = []
             lane_sections = []
             if lanes is not None:
                 for ln_child in lanes:
-                    if ln_child.tag.endswith('laneOffset'):
+                    if ln_child.tag.endswith("laneOffset"):
                         lane_offsets.append(
                             {
-                                's': float(ln_child.attrib.get('s', 0.0)),
-                                'a': float(ln_child.attrib.get('a', 0.0)),
-                                'b': float(ln_child.attrib.get('b', 0.0)),
-                                'c': float(ln_child.attrib.get('c', 0.0)),
-                                'd': float(ln_child.attrib.get('d', 0.0)),
+                                "s": float(ln_child.attrib.get("s", 0.0)),
+                                "a": float(ln_child.attrib.get("a", 0.0)),
+                                "b": float(ln_child.attrib.get("b", 0.0)),
+                                "c": float(ln_child.attrib.get("c", 0.0)),
+                                "d": float(ln_child.attrib.get("d", 0.0)),
                             }
                         )
-                    elif ln_child.tag.endswith('laneSection'):
-                        section = {'s': float(ln_child.attrib.get('s', 0.0)), 'lanes': {}}
+                    elif ln_child.tag.endswith("laneSection"):
+                        section = {
+                            "s": float(ln_child.attrib.get("s", 0.0)),
+                            "lanes": {},
+                        }
 
                         for side in ln_child:
                             if not (
-                                side.tag.endswith('left')
-                                or side.tag.endswith('right')
-                                or side.tag.endswith('center')
+                                side.tag.endswith("left")
+                                or side.tag.endswith("right")
+                                or side.tag.endswith("center")
                             ):
                                 continue
                             for lane in side:
-                                if not lane.tag.endswith('lane'):
+                                if not lane.tag.endswith("lane"):
                                     continue
                                 try:
-                                    lane_id = int(lane.attrib.get('id', 0))
+                                    lane_id = int(lane.attrib.get("id", 0))
                                 except Exception:
                                     continue
                                 widths = []
                                 for lane_child in lane:
-                                    if lane_child.tag.endswith('width'):
+                                    if lane_child.tag.endswith("width"):
                                         widths.append(
                                             {
-                                                'sOffset': float(lane_child.attrib.get('sOffset', 0.0)),
-                                                'a': float(lane_child.attrib.get('a', 0.0)),
-                                                'b': float(lane_child.attrib.get('b', 0.0)),
-                                                'c': float(lane_child.attrib.get('c', 0.0)),
-                                                'd': float(lane_child.attrib.get('d', 0.0)),
+                                                "sOffset": float(
+                                                    lane_child.attrib.get(
+                                                        "sOffset", 0.0
+                                                    )
+                                                ),
+                                                "a": float(
+                                                    lane_child.attrib.get("a", 0.0)
+                                                ),
+                                                "b": float(
+                                                    lane_child.attrib.get("b", 0.0)
+                                                ),
+                                                "c": float(
+                                                    lane_child.attrib.get("c", 0.0)
+                                                ),
+                                                "d": float(
+                                                    lane_child.attrib.get("d", 0.0)
+                                                ),
                                             }
                                         )
-                                widths.sort(key=lambda w: w['sOffset'])
-                                section['lanes'][lane_id] = widths
+                                widths.sort(key=lambda w: w["sOffset"])
+                                section["lanes"][lane_id] = widths
 
                         lane_sections.append(section)
 
-            lane_offsets.sort(key=lambda lo: lo['s'])
-            lane_sections.sort(key=lambda ls: ls['s'])
+            lane_offsets.sort(key=lambda lo: lo["s"])
+            lane_sections.sort(key=lambda ls: ls["s"])
 
             roads[road_id] = {
-                'length': road_length,
-                'geometries': geometries,
-                'lane_offsets': lane_offsets,
-                'lane_sections': lane_sections,
+                "length": road_length,
+                "geometries": geometries,
+                "lane_offsets": lane_offsets,
+                "lane_sections": lane_sections,
             }
 
         self._xodr_cache[cache_key] = roads
@@ -202,7 +218,12 @@ class OpenDrivePositionResolver:
         Returns:
             _type_: evaluated polynomial value at distance ds
         """
-        return coeffs['a'] + coeffs['b'] * ds + coeffs['c'] * ds * ds + coeffs['d'] * ds * ds * ds
+        return (
+            coeffs["a"]
+            + coeffs["b"] * ds
+            + coeffs["c"] * ds * ds
+            + coeffs["d"] * ds * ds * ds
+        )
 
     def _eval_road_reference_line(self, road_data, s):
         """
@@ -214,28 +235,30 @@ class OpenDrivePositionResolver:
         Returns:
             _type_: tuple of (x, y, heading) at the specified distance
         """
-        geoms = road_data.get('geometries', [])
+        geoms = road_data.get("geometries", [])
         if len(geoms) == 0:
             return (None, None, None)
 
-        road_length = max(float(road_data.get('length', 0.0)), 0.0)
-        s_clamped = min(max(float(s), 0.0), road_length if road_length > 0 else float(s))
+        road_length = max(float(road_data.get("length", 0.0)), 0.0)
+        s_clamped = min(
+            max(float(s), 0.0), road_length if road_length > 0 else float(s)
+        )
 
         geom = geoms[0]
         for candidate in geoms:
-            if candidate['s'] <= s_clamped:
+            if candidate["s"] <= s_clamped:
                 geom = candidate
             else:
                 break
 
-        ds = max(0.0, s_clamped - geom['s'])
-        ds = min(ds, max(geom['length'], 0.0))
+        ds = max(0.0, s_clamped - geom["s"])
+        ds = min(ds, max(geom["length"], 0.0))
 
-        x0 = geom['x']
-        y0 = geom['y']
-        hdg0 = geom['hdg']
-        if geom['type'] == 'arc' and abs(geom['curvature']) >= 1e-12:
-            k = geom['curvature']
+        x0 = geom["x"]
+        y0 = geom["y"]
+        hdg0 = geom["hdg"]
+        if geom["type"] == "arc" and abs(geom["curvature"]) >= 1e-12:
+            k = geom["curvature"]
             x = x0 + (math.sin(hdg0 + k * ds) - math.sin(hdg0)) / k
             y = y0 - (math.cos(hdg0 + k * ds) - math.cos(hdg0)) / k
             hdg = hdg0 + k * ds
@@ -257,18 +280,18 @@ class OpenDrivePositionResolver:
         Returns:
             _type_: offset
         """
-        lane_offsets = road_data.get('lane_offsets', [])
-        lane_sections = road_data.get('lane_sections', [])
+        lane_offsets = road_data.get("lane_offsets", [])
+        lane_sections = road_data.get("lane_sections", [])
 
         base_offset = 0.0
         if len(lane_offsets) > 0:
             lane_offset = lane_offsets[0]
             for candidate in lane_offsets:
-                if candidate['s'] <= s:
+                if candidate["s"] <= s:
                     lane_offset = candidate
                 else:
                     break
-            base_offset = self._eval_poly(lane_offset, s - lane_offset['s'])
+            base_offset = self._eval_poly(lane_offset, s - lane_offset["s"])
 
         if lane_id == 0:
             return base_offset
@@ -278,24 +301,24 @@ class OpenDrivePositionResolver:
 
         lane_section = lane_sections[0]
         for candidate in lane_sections:
-            if candidate['s'] <= s:
+            if candidate["s"] <= s:
                 lane_section = candidate
             else:
                 break
 
-        ds_section = s - lane_section['s']
+        ds_section = s - lane_section["s"]
 
         def eval_lane_width(target_lane_id):
-            widths = lane_section['lanes'].get(target_lane_id)
+            widths = lane_section["lanes"].get(target_lane_id)
             if not widths:
                 return None
             width = widths[0]
             for candidate in widths:
-                if candidate['sOffset'] <= ds_section:
+                if candidate["sOffset"] <= ds_section:
                     width = candidate
                 else:
                     break
-            return self._eval_poly(width, ds_section - width['sOffset'])
+            return self._eval_poly(width, ds_section - width["sOffset"])
 
         t = base_offset
         if lane_id > 0:

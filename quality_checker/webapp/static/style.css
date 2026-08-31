@@ -1,0 +1,670 @@
+/* Palette shared with scenario.generator, so both tools read as one family. */
+:root {
+  --ink: #13283f;
+  --muted: #617386;
+  --line: #d9e5ee;
+  /* Borders that are the only visual boundary of a control need >=3:1 against
+     both --panel and --paper; --line is decorative only and stays as it was. */
+  --line-strong: #6f8698;
+  --paper: #f4f8fb;
+  --panel: #ffffff;
+  --accent: #fea801;
+  --forest: #8bb8d8;
+  --navy: #28627d;
+  --error: #9a261d;
+  --warning: #8a6716;
+  --focus: var(--navy);
+}
+* {
+  box-sizing: border-box;
+}
+[hidden] {
+  display: none !important;
+}
+input[type="checkbox"] {
+  accent-color: var(--navy);
+}
+/*
+ * Disclosure arrow, drawn the same way as in scenario.generator: the native
+ * marker varies per browser, so a rotated corner marks what is collapsible and
+ * turns to point down once the panel is open.
+ */
+details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+details > summary::-webkit-details-marker {
+  display: none;
+}
+details > summary::before {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  margin: 0 9px 0 2px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  content: "";
+  transform: rotate(-45deg);
+  transform-origin: center;
+}
+details[open] > summary::before {
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: Helvetica, Arial, sans-serif;
+  /* rem throughout, so the browser's own font-size setting is honoured. */
+  font-size: 0.9375rem;
+  line-height: 1.45;
+}
+
+/*
+ * One focus rule for everything. The 2px offset places the ring outside the
+ * control, on the panel background, so it stays visible on the dark #submit
+ * button too. Nothing in this file sets outline: none.
+ */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The form column is long, so keyboard users get a way past it. */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -60px;
+  z-index: 10;
+  border-radius: 0 0 8px 8px;
+  background: var(--panel);
+  color: var(--navy);
+  padding: 10px 14px;
+  font-weight: 700;
+  transition: top 0.15s ease-out;
+}
+.skip-link:focus {
+  top: 0;
+}
+
+/* Header with the tool identity, the two modes and the status line. */
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.4rem;
+  min-height: 62px;
+  padding: 0.6rem 1.4rem;
+  border-bottom: 1px solid var(--line);
+  background: #dcecf5;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font: 700 1.0625rem Helvetica, Arial, sans-serif;
+}
+/* The icon is decorative here: the heading already carries the name as text. */
+.brand img {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+.tabs {
+  display: flex;
+  gap: 6px;
+}
+button.tab {
+  background: transparent;
+  color: var(--navy);
+  padding: 8px 12px;
+}
+button.tab.active {
+  background: var(--panel);
+  color: var(--ink);
+}
+/* Imprint and data privacy read as header text, not as actions competing with
+   the mode tabs, but keep a 32px target so they stay comfortably clickable. */
+.header-legal-action {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 4px;
+  color: var(--ink);
+  text-decoration: none;
+  white-space: nowrap;
+}
+button.header-legal-action {
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+}
+.status {
+  margin-left: auto;
+  color: var(--muted);
+}
+.status.loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.status.loading::before {
+  width: 12px;
+  height: 12px;
+  border: 2px solid #2f829f;
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  content: "";
+  animation: status-loading-spin 0.8s linear infinite;
+}
+@keyframes status-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status.loading::before {
+    border-top-color: #2f829f;
+    animation: none;
+  }
+  .skip-link {
+    transition: none;
+  }
+}
+/* At the narrowest widths the header stacks rather than overflowing. */
+@media (max-width: 520px) {
+  header {
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.6rem 0.75rem;
+  }
+  .status {
+    margin-left: 0;
+  }
+}
+
+/* Two-column shell: the form on the left, results on the right. */
+main {
+  display: grid;
+  grid-template-columns: 22rem minmax(26rem, 1fr);
+  gap: 12px;
+  padding: 12px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  main {
+    grid-template-columns: 1fr;
+  }
+}
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--panel);
+  box-shadow: 0 2px 8px #1730220a;
+  padding: 12px;
+}
+.result-panel {
+  min-height: 60vh;
+}
+.panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+  font-size: 1rem;
+  font-weight: 700;
+}
+.panel-title h2 {
+  margin: 0;
+  font-size: inherit;
+  overflow-wrap: anywhere;
+}
+.result-actions {
+  display: flex;
+  gap: 12px;
+  font-weight: 400;
+}
+.filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Target Size (Minimum): the whole label is the target, not just the box. */
+  min-height: 24px;
+  padding: 2px 4px;
+  color: var(--muted);
+}
+.filter input[type="checkbox"] {
+  width: 1.15rem;
+  height: 1.15rem;
+  margin: 0;
+}
+
+/* Form controls. */
+.field {
+  display: block;
+  margin-bottom: 14px;
+}
+.field > span,
+.field > label {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+.field small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+/* A file input next to its Remove button. */
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.file-row input[type="file"] {
+  flex: 1;
+  min-width: 0;
+}
+button.remove {
+  flex: none;
+  background: transparent;
+  color: var(--navy);
+  min-height: 24px;
+  padding: 6px 8px;
+  text-decoration: underline;
+}
+button.remove:hover {
+  background: #e8f1f5;
+}
+.field.inline {
+  display: grid;
+  grid-template-columns: 1fr 6rem;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.field.inline > span {
+  margin-bottom: 0;
+  font-weight: 400;
+}
+input[type="file"],
+input[type="number"],
+select {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 7px;
+  font: inherit;
+}
+/*
+ * The example dropdown is outranked by an uploaded file, but stays enabled:
+ * a disabled control leaves the tab order and the accessibility tree, taking
+ * the explanation in #example-hint with it.
+ */
+select.inert-choice {
+  border-style: dashed;
+  color: var(--muted);
+}
+.thresholds {
+  margin-bottom: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 10px;
+}
+/* No gap: the arrow brings its own margin, and the badge sets its own below. */
+.thresholds summary {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 4px 0;
+  cursor: pointer;
+  font-weight: 600;
+}
+/* Says that a collapsed panel is quietly changing the result of a check. */
+.summary-badge {
+  margin-left: 8px;
+  border-radius: 999px;
+  background: #f8f0dc;
+  color: var(--warning);
+  padding: 2px 9px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.thresholds > .field {
+  margin-top: 10px;
+}
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: var(--forest);
+  color: #012a7a;
+  min-height: 24px;
+  padding: 10px 12px;
+  cursor: pointer;
+  line-height: 1.2;
+  font: 600 0.875rem Helvetica, Arial, sans-serif;
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+button.secondary {
+  background: transparent;
+  color: var(--navy);
+  padding: 8px 0;
+}
+#submit {
+  width: 100%;
+  background: var(--navy);
+  color: #ffffff;
+  padding: 12px;
+}
+.error {
+  margin: 12px 0 0;
+  border-radius: 8px;
+  background: #f7e7e5;
+  color: var(--error);
+  padding: 10px;
+}
+[aria-invalid="true"] {
+  border-color: var(--error);
+}
+.placeholder {
+  color: var(--muted);
+}
+
+/* Result: status badges, metadata, findings, plots. */
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.badge {
+  border-radius: 999px;
+  background: #e8f1f5;
+  padding: 5px 11px;
+  font-weight: 600;
+}
+.badge.ok {
+  background: #e2efe4;
+  color: #1f5b2c;
+}
+.badge.bad {
+  background: #f7e7e5;
+  color: var(--error);
+}
+.badge.warn {
+  background: #f8f0dc;
+  color: var(--warning);
+}
+.meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  margin-bottom: 16px;
+  color: var(--muted);
+}
+.meta dt {
+  font-weight: 600;
+}
+.meta dd {
+  margin: 0;
+}
+.note {
+  margin: 0 0 16px;
+  border-left: 3px solid var(--accent);
+  background: #fdf6e6;
+  padding: 9px 11px;
+}
+h3 {
+  margin: 18px 0 8px;
+  font-size: 0.9375rem;
+}
+.findings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.finding {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 6px;
+  border-left: 3px solid var(--line-strong);
+  padding: 8px 10px;
+  background: var(--paper);
+  border-radius: 0 8px 8px 0;
+}
+.finding.error {
+  border-left-color: var(--error);
+}
+.finding.warning {
+  border-left-color: var(--warning);
+}
+.finding-message {
+  overflow-wrap: anywhere;
+}
+.finding.error .finding-message {
+  color: var(--error);
+}
+.finding.warning .finding-message {
+  color: var(--warning);
+}
+.finding-detail {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+/* The text equivalent of the charts below it. */
+.plots-summary {
+  margin: 0 0 12px;
+  color: var(--muted);
+}
+.plots {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+.plot figure {
+  margin: 0;
+}
+.plot img {
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.plot figcaption {
+  margin-top: 4px;
+  color: var(--muted);
+}
+.downloads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 18px;
+}
+/* Outlined, not filled: a real button boundary that still yields to #submit. */
+button.download {
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  color: var(--navy);
+  padding: 10px 14px;
+}
+button.download:hover:not(:disabled) {
+  border-color: var(--navy);
+  background: var(--paper);
+}
+
+/* Batch table. */
+.table-scroll {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th,
+td {
+  border-bottom: 1px solid var(--line-strong);
+  padding: 7px 9px;
+  text-align: left;
+  white-space: nowrap;
+}
+th {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+/* The file name is a button, so the row is not itself a click target. */
+button.row-open {
+  background: transparent;
+  color: var(--navy);
+  padding: 4px 0;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  text-decoration: underline;
+}
+tbody tr:hover,
+tbody tr:focus-within {
+  background: #e8f1f5;
+}
+td.count-error {
+  color: var(--error);
+  font-weight: 600;
+}
+td.count-warning {
+  color: var(--warning);
+  font-weight: 600;
+}
+.back-link {
+  margin-bottom: 12px;
+}
+
+/* The help and data privacy dialogs, the only dialogs in the application. */
+dialog {
+  width: min(680px, 92vw);
+  max-height: 85vh;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  padding: 0;
+  color: var(--ink);
+  overflow: visible;
+}
+dialog::backdrop {
+  background: #13283f66;
+}
+dialog .panel {
+  max-height: 85vh;
+  overflow: auto;
+}
+dialog p {
+  margin: 0 0 12px;
+}
+#data-privacy-content,
+#help-content,
+#about-content {
+  max-height: 60vh;
+  overflow: auto;
+  font-size: 0.875rem;
+}
+/* The about text carries the project and funding logos. One width for all of
+   them keeps the pair looking like a set, whatever their intrinsic sizes are. */
+.document-content img {
+  display: block;
+  width: min(240px, 100%);
+  height: auto;
+  margin: 12px 0;
+}
+.document-content h1 {
+  margin-top: 0;
+  color: var(--navy);
+  font-size: 1.125rem;
+}
+.document-content h2 {
+  margin-top: 1.5em;
+  color: var(--navy);
+  font-size: 1rem;
+}
+.document-content li + li {
+  margin-top: 0.4em;
+}
+/* The help text uses tables the notice does not. Unlike the batch table above
+   they carry prose, so they wrap instead of keeping every cell on one line -
+   without the reset they would push the dialog into horizontal scrolling. */
+.document-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.8em 0;
+}
+.document-content th,
+.document-content td {
+  border-bottom: 1px solid var(--line);
+  padding: 6px 8px;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+.document-content th {
+  color: var(--navy);
+  font-size: 0.875rem;
+}
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 4px;
+}
+/* The confirmation sits next to its button rather than being pushed right the
+   way the header status is. */
+.dialog-actions .status {
+  margin-left: 0;
+}
+
+/*
+ * Windows High Contrast flattens every background colour, which would erase
+ * the badge and finding severities. They keep a border so the distinction
+ * survives as shape rather than colour.
+ */
+@media (forced-colors: active) {
+  .badge {
+    border: 1px solid CanvasText;
+  }
+  .finding {
+    border: 1px solid CanvasText;
+    border-left-width: 4px;
+  }
+  button.tab.active {
+    border: 2px solid Highlight;
+  }
+  .status.loading::before {
+    border-color: CanvasText;
+    border-top-color: Highlight;
+  }
+  :focus-visible {
+    outline-color: Highlight;
+  }
+}

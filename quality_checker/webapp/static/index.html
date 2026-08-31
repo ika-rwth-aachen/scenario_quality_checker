@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>scenario quality checker</title>
+<link rel="icon" href="/branding/scenario_quality_checker_logo.png">
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+
+<a class="skip-link" href="#result">Skip to results</a>
+
+<header>
+  <h1 class="brand">
+    <img src="/branding/scenario_quality_checker_logo.png" alt="" width="28" height="28">
+    scenario.quality.checker
+  </h1>
+  <div class="tabs" role="tablist" aria-label="Check mode">
+    <button id="tab-single" class="tab active" type="button"
+            role="tab" aria-selected="true" aria-controls="single-inputs">Single scenario</button>
+    <button id="tab-batch" class="tab" type="button"
+            role="tab" aria-selected="false" aria-controls="batch-inputs" tabindex="-1">Batch</button>
+  </div>
+  <button id="help" type="button" class="header-legal-action">Help</button>
+  <button id="about" type="button" class="header-legal-action">About</button>
+  <a class="header-legal-action"
+     href="https://scenario.center/imprint/"
+     target="_blank" rel="noopener noreferrer">Imprint</a>
+  <button id="data-privacy" type="button" class="header-legal-action">Data privacy</button>
+  <span id="status" class="status" role="status"></span>
+</header>
+
+<main>
+  <section class="panel form-panel" aria-labelledby="form-title">
+    <h2 class="panel-title" id="form-title">Check a scenario</h2>
+
+    <form id="check-form">
+      <div id="single-inputs" role="tabpanel" aria-labelledby="tab-single" tabindex="0">
+        <div class="field">
+          <label for="scenario-input">OpenSCENARIO file (.xosc)</label>
+          <div class="file-row">
+            <input id="scenario-input" type="file" accept=".xosc">
+            <button id="scenario-remove" type="button" class="remove" hidden>Remove</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="map-input">OpenDRIVE map (.xodr, optional)</label>
+          <div class="file-row">
+            <input id="map-input" type="file" accept=".xodr,.xml" aria-describedby="map-hint">
+            <button id="map-remove" type="button" class="remove" hidden>Remove</button>
+          </div>
+          <small id="map-hint">Needed to resolve lane positions and draw the road network.</small>
+        </div>
+
+        <div class="field">
+          <label for="example-input">&hellip; or pick a bundled example</label>
+          <select id="example-input" aria-describedby="example-hint">
+            <option value="">None</option>
+          </select>
+          <small id="example-hint">Used when no OpenSCENARIO file is uploaded.</small>
+        </div>
+      </div>
+
+      <div id="batch-inputs" role="tabpanel" aria-labelledby="tab-batch" tabindex="0" hidden>
+        <div class="field">
+          <label for="batch-input">Scenario files or a .zip archive</label>
+          <div class="file-row">
+            <input id="batch-input" type="file" accept=".xosc,.xodr,.zip" multiple aria-describedby="batch-hint">
+            <button id="batch-remove" type="button" class="remove" hidden>Remove</button>
+          </div>
+          <small id="batch-hint">Every .xosc in the selection is checked and summarized in one table. At most one .zip archive.</small>
+        </div>
+      </div>
+
+      <details class="thresholds">
+        <summary>Thresholds<span id="thresholds-badge" class="summary-badge" hidden></span></summary>
+        <label class="field inline">
+          <span>Acceleration warning [m/s&sup2;]</span>
+          <input id="acceleration-warning" type="number" step="any" min="0">
+        </label>
+        <label class="field inline">
+          <span>Acceleration error [m/s&sup2;]</span>
+          <input id="acceleration-error" type="number" step="any" min="0">
+        </label>
+        <label class="field inline">
+          <span>Sideslip angle warning [rad]</span>
+          <input id="sideslip-warning" type="number" step="any" min="0">
+        </label>
+        <label class="field inline">
+          <span>Sideslip angle error [rad]</span>
+          <input id="sideslip-error" type="number" step="any" min="0">
+        </label>
+        <button id="reset-thresholds" type="button" class="secondary">Reset to defaults</button>
+      </details>
+
+      <button id="submit" type="submit">Check quality</button>
+    </form>
+
+    <p id="error" class="error" role="alert" hidden></p>
+  </section>
+
+  <section class="panel result-panel" aria-labelledby="result-title">
+    <div class="panel-title">
+      <h2 id="result-title" tabindex="-1">Result</h2>
+      <span class="result-actions" id="result-actions" hidden>
+        <label class="filter"><input id="show-errors" type="checkbox" checked> Errors</label>
+        <label class="filter"><input id="show-warnings" type="checkbox" checked> Warnings</label>
+      </span>
+    </div>
+    <div id="result">
+      <p class="placeholder">Upload an OpenSCENARIO file to see its findings, dynamics plots and reports.</p>
+    </div>
+  </section>
+</main>
+
+<dialog id="help-dialog" aria-labelledby="help-dialog-title">
+  <section class="panel">
+    <div class="panel-title">
+      <h2 id="help-dialog-title">Help</h2>
+      <button id="close-help" type="button" class="secondary">Close</button>
+    </div>
+    <div id="help-content" class="document-content" tabindex="0"
+         aria-label="scenario quality checker help"></div>
+  </section>
+</dialog>
+
+<dialog id="about-dialog" aria-labelledby="about-dialog-title">
+  <section class="panel">
+    <div class="panel-title">
+      <h2 id="about-dialog-title">About</h2>
+      <button id="close-about" type="button" class="secondary">Close</button>
+    </div>
+    <div id="about-content" class="document-content" tabindex="0"
+         aria-label="about scenario quality checker"></div>
+  </section>
+</dialog>
+
+<dialog id="data-privacy-dialog" aria-labelledby="data-privacy-dialog-title">
+  <section class="panel">
+    <div class="panel-title">
+      <button id="close-data-privacy" type="button" class="secondary">Close</button>
+    </div>
+    <div id="data-privacy-content" class="document-content" tabindex="0"
+         aria-label="scenario quality checker data processing notice"></div>
+    <div class="dialog-actions">
+      <button id="forget-session" type="button" class="secondary">Delete my uploads now</button>
+      <span id="forget-session-status" class="status" role="status"></span>
+    </div>
+  </section>
+</dialog>
+
+<script src="/assets/app.js"></script>
+<script src="/assets/render-single.js"></script>
+<script src="/assets/render-batch.js"></script>
+</body>
+</html>

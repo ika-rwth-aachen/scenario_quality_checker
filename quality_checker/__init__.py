@@ -1,2 +1,16 @@
+"""
+Scenario Quality Checker package.
 
-from quality_checker import *
+matplotlib is imported at module scope by ``config.py`` (it reads
+``mpl.colormaps`` in a class body), so the backend has to be selected here,
+before any submodule is imported. ``Agg`` keeps the tool usable headless, which
+both the CLI on a build server and the web app depend on.
+"""
+
+import os
+
+os.environ.setdefault("MPLBACKEND", "Agg")
+
+from .thresholds import Thresholds
+
+__all__ = ["Thresholds"]
