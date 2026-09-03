@@ -78,7 +78,9 @@ def test_prefixed_responses_keep_browser_urls_and_cookie_inside_the_mount(
     )
     server.rate_limiter.reset()
     monkeypatch.setattr(server.rate_limiter, "_limit", 1)
+    monkeypatch.setattr(server.rate_limiter, "_window", 10**9)
     with TestClient(prefixed_app) as prefixed_client:
+
         def request():
             return prefixed_client.post(
                 "/quality-checker/api/checks",
@@ -91,8 +93,7 @@ def test_prefixed_responses_keep_browser_urls_and_cookie_inside_the_mount(
         assert result["downloads"]["pdf"].startswith("/quality-checker/api/")
         assert result["plots"]
         assert all(
-            plot["url"].startswith("/quality-checker/api/")
-            for plot in result["plots"]
+            plot["url"].startswith("/quality-checker/api/") for plot in result["plots"]
         )
         assert "Path=/quality-checker" in response.headers["set-cookie"]
         assert request().status_code == 429
@@ -376,8 +377,11 @@ def test_deleting_during_a_report_download_leaves_nothing_behind(
 
     monkeypatch.setattr(server, "_build_single_report", blocking)
 
+    downloaded = {}
+
     def run_download():
-        client.get(f"/api/runs/{result['run_id']}/report.pdf")
+        response = client.get(f"/api/runs/{result['run_id']}/report.pdf")
+        downloaded["status_code"] = response.status_code
 
     deleted = {}
 
@@ -395,6 +399,7 @@ def test_deleting_during_a_report_download_leaves_nothing_behind(
     downloading.join(30)
     deleting.join(30)
 
+    assert downloaded == {"status_code": 200}
     assert deleted == {"cleared": True}
     assert not (server.WORK_ROOT / session_id).exists()
 

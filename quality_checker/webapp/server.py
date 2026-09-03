@@ -72,9 +72,8 @@ def normalize_base_path(value):
     if not stripped or stripped == "/":
         return ""
     normalized = f"/{stripped.strip('/')}"
-    if (
-        not BASE_PATH_PATTERN.fullmatch(normalized)
-        or any(part in {".", ".."} for part in normalized.split("/"))
+    if not BASE_PATH_PATTERN.fullmatch(normalized) or any(
+        part in {".", ".."} for part in normalized.split("/")
     ):
         raise ValueError(
             "SCENARIO_QUALITY_CHECKER_BASE_PATH must be an absolute URL path "
@@ -1288,8 +1287,10 @@ def get_batch(request, batch_id):
 
 def render_index(base_path=BASE_PATH):
     """Render the frontend shell with deployment-prefixed URLs."""
-    return (STATIC_DIRECTORY / "index.html").read_text(encoding="utf-8").replace(
-        BASE_PATH_PLACEHOLDER, base_path
+    return (
+        (STATIC_DIRECTORY / "index.html")
+        .read_text(encoding="utf-8")
+        .replace(BASE_PATH_PLACEHOLDER, base_path)
     )
 
 
@@ -1523,36 +1524,65 @@ def _build_single_report(run, want_pdf):
     return reports / f"{stem}.csv"
 
 
+class SessionLockedFileResponse(FileResponse):
+    """Keep a session locked until its file has been sent completely."""
+
+    def __init__(self, *args, session_lock, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.session_lock = session_lock
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.session_lock.release()
+
+
+async def report_response(request, builder, *builder_args, media_type, error_detail):
+    """Build and stream a report while preventing concurrent session deletion."""
+    session_lock = request.state.session.lock
+    await session_lock.acquire()
+    try:
+        path = await in_worker(request, builder, *builder_args)
+        if not path.is_file():
+            raise HTTPException(status_code=500, detail=error_detail)
+        return SessionLockedFileResponse(
+            path,
+            session_lock=session_lock,
+            media_type=media_type,
+            filename=path.name,
+        )
+    except BaseException:
+        session_lock.release()
+        raise
+
+
 @app.get("/api/runs/{run_id}/report.pdf")
 async def get_run_pdf(request: Request, run_id: str):
     """Return the PDF report of a run, generating it on first request."""
     run = get_run(request, run_id)
-    # Report building writes into the session directory, so it is serialized
-    # against DELETE /api/session the same way a check is. Costs nothing: the
-    # checker executor is a single worker, so this work is already sequential.
-    async with request.state.session.lock:
-        path = await in_worker(request, _build_single_report, run, True)
-    if not path.is_file():
-        raise HTTPException(
-            status_code=500, detail="The PDF report could not be created"
-        )
-    return FileResponse(path, media_type="application/pdf", filename=path.name)
+    return await report_response(
+        request,
+        _build_single_report,
+        run,
+        True,
+        media_type="application/pdf",
+        error_detail="The PDF report could not be created",
+    )
 
 
 @app.get("/api/runs/{run_id}/report.csv")
 async def get_run_csv(request: Request, run_id: str):
     """Return the CSV report of a run, generating it on first request."""
     run = get_run(request, run_id)
-    # Report building writes into the session directory, so it is serialized
-    # against DELETE /api/session the same way a check is. Costs nothing: the
-    # checker executor is a single worker, so this work is already sequential.
-    async with request.state.session.lock:
-        path = await in_worker(request, _build_single_report, run, False)
-    if not path.is_file():
-        raise HTTPException(
-            status_code=500, detail="The CSV report could not be created"
-        )
-    return FileResponse(path, media_type="text/csv", filename=path.name)
+    return await report_response(
+        request,
+        _build_single_report,
+        run,
+        False,
+        media_type="text/csv",
+        error_detail="The CSV report could not be created",
+    )
 
 
 def _copy_zip_member(archive, info, target, remaining):
@@ -1853,32 +1883,28 @@ def _build_batch_report(batch, want_pdf):
 async def get_batch_pdf(request: Request, batch_id: str):
     """Return the aggregated PDF report of a batch."""
     batch = get_batch(request, batch_id)
-    # Report building writes into the session directory, so it is serialized
-    # against DELETE /api/session the same way a check is. Costs nothing: the
-    # checker executor is a single worker, so this work is already sequential.
-    async with request.state.session.lock:
-        path = await in_worker(request, _build_batch_report, batch, True)
-    if not path.is_file():
-        raise HTTPException(
-            status_code=500, detail="The aggregated PDF could not be created"
-        )
-    return FileResponse(path, media_type="application/pdf", filename=path.name)
+    return await report_response(
+        request,
+        _build_batch_report,
+        batch,
+        True,
+        media_type="application/pdf",
+        error_detail="The aggregated PDF could not be created",
+    )
 
 
 @app.get("/api/batches/{batch_id}/report.csv")
 async def get_batch_csv(request: Request, batch_id: str):
     """Return the aggregated CSV report of a batch."""
     batch = get_batch(request, batch_id)
-    # Report building writes into the session directory, so it is serialized
-    # against DELETE /api/session the same way a check is. Costs nothing: the
-    # checker executor is a single worker, so this work is already sequential.
-    async with request.state.session.lock:
-        path = await in_worker(request, _build_batch_report, batch, False)
-    if not path.is_file():
-        raise HTTPException(
-            status_code=500, detail="The aggregated CSV could not be created"
-        )
-    return FileResponse(path, media_type="text/csv", filename=path.name)
+    return await report_response(
+        request,
+        _build_batch_report,
+        batch,
+        False,
+        media_type="text/csv",
+        error_detail="The aggregated CSV could not be created",
+    )
 
 
 def _forget_unknown_session(request):
