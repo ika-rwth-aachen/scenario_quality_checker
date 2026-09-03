@@ -2,13 +2,16 @@
 # Update deliberately: docker pull python:3.11-slim && docker inspect --format='{{index .RepoDigests 0}}' python:3.11-slim
 FROM python:3.11-slim@sha256:9c900dea9e8fb7e16277c179b555cc72d29a352dbc33cff48ad5a0412fd5bfc7
 
+ARG SCENARIO_QUALITY_CHECKER_BASE_PATH=""
+
 # Agg keeps matplotlib usable without a display. The package also sets this
 # itself, but declaring it here documents the requirement for the image.
 ENV MPLBACKEND=Agg \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    SCENARIO_QUALITY_CHECKER_BASE_PATH=${SCENARIO_QUALITY_CHECKER_BASE_PATH}
 
 WORKDIR /app
 

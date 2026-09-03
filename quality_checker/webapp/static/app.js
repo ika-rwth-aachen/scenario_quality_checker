@@ -1,6 +1,20 @@
 /* Shared helpers, mode switching, threshold handling and form submission. */
 
 const $ = (selector) => document.querySelector(selector);
+const basePathMetadata = document.querySelector('meta[name="scenario-quality-checker-base-path"]');
+const applicationBasePath = basePathMetadata ? basePathMetadata.content : "";
+
+/** Resolve an application path without escaping an optional deployment prefix. */
+function applicationUrl(path) {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  if (
+    applicationBasePath
+    && (normalizedPath === applicationBasePath || normalizedPath.startsWith(`${applicationBasePath}/`))
+  ) {
+    return normalizedPath;
+  }
+  return `${applicationBasePath}${normalizedPath}`;
+}
 
 const state = {
   mode: "single",
@@ -16,7 +30,7 @@ const state = {
 
 /** Fetch wrapper that turns API error payloads into thrown Errors. */
 async function api(path, options = {}, parseJson = true) {
-  const response = await fetch(path, options);
+  const response = await fetch(applicationUrl(path), options);
   if (!response.ok) {
     let detail = response.statusText;
     try {
