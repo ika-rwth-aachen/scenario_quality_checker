@@ -205,7 +205,9 @@ def summary_row_json(checker, run_id, file_name):
     }
 
 
-def serialize_checker(checker, run_id, file_name, plots=(), map_info=None):
+def serialize_checker(
+    checker, run_id, file_name, plots=(), map_info=None, base_path=""
+):
     """
     Return the full structured result for one checked scenario.
 
@@ -215,6 +217,7 @@ def serialize_checker(checker, run_id, file_name, plots=(), map_info=None):
         file_name: Display name of the uploaded scenario file.
         plots: Iterable of (name, label) pairs that were actually rendered.
         map_info: Optional dict describing the companion OpenDRIVE file.
+        base_path: Optional deployment prefix for browser-facing URLs.
     return: JSON-serializable dict.
     """
     thresholds = getattr(checker, "thresholds", None) or Thresholds.default()
@@ -247,12 +250,12 @@ def serialize_checker(checker, run_id, file_name, plots=(), map_info=None):
             {
                 "name": name,
                 "label": label,
-                "url": f"/api/runs/{run_id}/plots/{name}.png",
+                "url": f"{base_path}/api/runs/{run_id}/plots/{name}.png",
             }
             for name, label in plots
         ],
         "downloads": {
-            "pdf": f"/api/runs/{run_id}/report.pdf",
-            "csv": f"/api/runs/{run_id}/report.csv",
+            "pdf": f"{base_path}/api/runs/{run_id}/report.pdf",
+            "csv": f"{base_path}/api/runs/{run_id}/report.csv",
         },
     }

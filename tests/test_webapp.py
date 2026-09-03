@@ -9,9 +9,98 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 from loguru import logger
 
 from conftest import created, upload
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        ("", ""),
+        ("/", ""),
+        ("quality-checker", "/quality-checker"),
+        ("/tools/quality-checker/", "/tools/quality-checker"),
+    ],
+)
+def test_base_path_is_normalized(configured, expected):
+    """Equivalent safe spellings produce one stable deployment prefix."""
+    from quality_checker.webapp.server import normalize_base_path
+
+    assert normalize_base_path(configured) == expected
+
+
+@pytest.mark.parametrize(
+    "configured",
+    ["/../quality-checker", "/quality-checker?debug=1", "/quality checker"],
+)
+def test_unsafe_base_path_is_rejected(configured):
+    """A build setting cannot inject a query or escape its URL path."""
+    from quality_checker.webapp.server import normalize_base_path
+
+    with pytest.raises(ValueError, match="SCENARIO_QUALITY_CHECKER_BASE_PATH"):
+        normalize_base_path(configured)
+
+
+def test_application_can_be_mounted_below_a_base_path():
+    """The UI, assets and API remain together below one deployment prefix."""
+    from quality_checker.webapp import server
+
+    prefixed_app = server.application_with_base_path(
+        server.route_app, "/quality-checker"
+    )
+
+    with TestClient(prefixed_app) as prefixed_client:
+        index = prefixed_client.get("/quality-checker/")
+
+        assert index.status_code == 200
+        assert 'content="/quality-checker"' in index.text
+        assert 'href="/quality-checker/assets/style.css"' in index.text
+        assert 'src="/quality-checker/assets/app.js"' in index.text
+        assert prefixed_client.get("/quality-checker/assets/app.js").status_code == 200
+        assert prefixed_client.get("/quality-checker/api/health").json() == {
+            "status": "ok"
+        }
+        about = prefixed_client.get("/quality-checker/api/about").json()["html"]
+        assert 'src="/quality-checker/branding/synergies.svg"' in about
+        assert prefixed_client.get("/api/health").status_code == 404
+
+
+def test_prefixed_responses_keep_browser_urls_and_cookie_inside_the_mount(
+    example, monkeypatch
+):
+    """Stateful browser traffic must not fall back to domain-root URLs."""
+    from quality_checker.webapp import server
+
+    prefixed_app = server.application_with_base_path(
+        server.route_app, "/quality-checker"
+    )
+    server.rate_limiter.reset()
+    monkeypatch.setattr(server.rate_limiter, "_limit", 1)
+    monkeypatch.setattr(server.rate_limiter, "_window", 10**9)
+    with TestClient(prefixed_app) as prefixed_client:
+
+        def request():
+            return prefixed_client.post(
+                "/quality-checker/api/checks",
+                files=upload(example("envelope_file_error_1.xosc")),
+            )
+
+        response = request()
+
+        result = created(response)
+        assert result["downloads"]["pdf"].startswith("/quality-checker/api/")
+        assert result["plots"]
+        assert all(
+            plot["url"].startswith("/quality-checker/api/") for plot in result["plots"]
+        )
+        assert "Path=/quality-checker" in response.headers["set-cookie"]
+        assert request().status_code == 429
+
+        deleted = prefixed_client.delete("/quality-checker/api/session")
+        assert deleted.json() == {"cleared": True}
+        assert "Path=/quality-checker" in deleted.headers["set-cookie"]
 
 
 def test_health_and_thresholds(client):
@@ -288,8 +377,11 @@ def test_deleting_during_a_report_download_leaves_nothing_behind(
 
     monkeypatch.setattr(server, "_build_single_report", blocking)
 
+    downloaded = {}
+
     def run_download():
-        client.get(f"/api/runs/{result['run_id']}/report.pdf")
+        response = client.get(f"/api/runs/{result['run_id']}/report.pdf")
+        downloaded["status_code"] = response.status_code
 
     deleted = {}
 
@@ -307,6 +399,7 @@ def test_deleting_during_a_report_download_leaves_nothing_behind(
     downloading.join(30)
     deleting.join(30)
 
+    assert downloaded == {"status_code": 200}
     assert deleted == {"cleared": True}
     assert not (server.WORK_ROOT / session_id).exists()
 

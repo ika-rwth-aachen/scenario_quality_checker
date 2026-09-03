@@ -31,7 +31,7 @@ from typing import List, Optional
 from uuid import uuid4
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 from markdown_it import MarkdownIt
@@ -57,11 +57,60 @@ ABOUT_PATH = Path(__file__).with_name("about.md")
 WORK_ROOT = Path(tempfile.gettempdir()) / "scenario-quality-checker-web"
 SESSION_COOKIE_NAME = "sqc_session"
 SESSION_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+BASE_PATH_PATTERN = re.compile(r"/[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*")
+BASE_PATH_PLACEHOLDER = "__SCENARIO_QUALITY_CHECKER_BASE_PATH__"
 
 ALLOWED_SCENARIO_SUFFIXES = {".xosc"}
 ALLOWED_MAP_SUFFIXES = {".xodr", ".xml"}
 UPLOAD_CHUNK_BYTES = 1024 * 1024
 ZIP_CHUNK_BYTES = 1024 * 1024
+
+
+def normalize_base_path(value):
+    """Return an optional normalized URL prefix or reject an unsafe value."""
+    stripped = str(value or "").strip()
+    if not stripped or stripped == "/":
+        return ""
+    normalized = f"/{stripped.strip('/')}"
+    if not BASE_PATH_PATTERN.fullmatch(normalized) or any(
+        part in {".", ".."} for part in normalized.split("/")
+    ):
+        raise ValueError(
+            "SCENARIO_QUALITY_CHECKER_BASE_PATH must be an absolute URL path "
+            "such as '/quality-checker'."
+        )
+    return normalized
+
+
+BASE_PATH = normalize_base_path(
+    os.environ.get("SCENARIO_QUALITY_CHECKER_BASE_PATH", "")
+)
+
+
+def application_url(path, base_path=BASE_PATH):
+    """Prefix one application-absolute URL with the configured base path."""
+    normalized_path = path if path.startswith("/") else f"/{path}"
+    return f"{base_path}{normalized_path}"
+
+
+def request_base_path(request):
+    """Return the normalized mount path supplied by the ASGI server."""
+    return normalize_base_path(str(request.scope.get("root_path", "")))
+
+
+def request_application_path(request):
+    """Return the route-local path when the application is mounted."""
+    root_path = request_base_path(request)
+    return request.url.path.removeprefix(root_path) if root_path else request.url.path
+
+
+def session_cookie_path(request=None):
+    """Scope the session cookie to this deployment's optional URL prefix."""
+    if request is not None:
+        mounted_path = request_base_path(request)
+        if mounted_path:
+            return mounted_path
+    return BASE_PATH or "/"
 
 
 def bundled_directory(name, environment_name):
@@ -223,10 +272,15 @@ class Run:
     map_info: dict
     plots: list = field(default_factory=list)
 
-    def result(self):
+    def result(self, base_path=""):
         """Return the structured result for this run."""
         return serialize_checker(
-            self.checker, self.run_id, self.file_name, self.plots, self.map_info
+            self.checker,
+            self.run_id,
+            self.file_name,
+            self.plots,
+            self.map_info,
+            base_path,
         )
 
 
@@ -1108,6 +1162,7 @@ async def bind_session(request, call_next):
         response.set_cookie(
             SESSION_COOKIE_NAME,
             session.session_id,
+            path=session_cookie_path(request),
             httponly=True,
             samesite="lax",
             secure=secure_cookies(request),
@@ -1119,10 +1174,11 @@ async def bind_session(request, call_next):
 @app.middleware("http")
 async def throttle_requests(request, call_next):
     """Refuse abusive requests before they reach the analysis worker."""
-    if request.method == "POST" and request.url.path in RATE_LIMITED_PATHS:
+    application_path = request_application_path(request)
+    if request.method == "POST" and application_path in RATE_LIMITED_PATHS:
         client = request.client.host if request.client else None
         if not rate_limiter.allow(client):
-            audit(request, "rate_limited", f"path={request.url.path}")
+            audit(request, "rate_limited", f"path={application_path}")
             return JSONResponse(
                 {
                     "detail": (
@@ -1229,10 +1285,19 @@ def get_batch(request, batch_id):
 # ---------------------------------------------------------------------------
 
 
+def render_index(base_path=BASE_PATH):
+    """Render the frontend shell with deployment-prefixed URLs."""
+    return (
+        (STATIC_DIRECTORY / "index.html")
+        .read_text(encoding="utf-8")
+        .replace(BASE_PATH_PLACEHOLDER, base_path)
+    )
+
+
 @app.get("/")
-def index():
+def index(request: Request):
     """Serve the single-page frontend."""
-    return FileResponse(STATIC_DIRECTORY / "index.html")
+    return HTMLResponse(render_index(request_base_path(request)))
 
 
 @app.get("/favicon.ico")
@@ -1264,7 +1329,7 @@ def thresholds():
     }
 
 
-def render_markdown(path):
+def render_markdown(path, base_path=BASE_PATH):
     """
     Render trusted, packaged Markdown without allowing embedded HTML.
 
@@ -1277,38 +1342,39 @@ def render_markdown(path):
         path: Path of the packaged Markdown file.
     return: Rendered HTML, with every link opening in a new tab.
     """
-    return (
+    rendered = (
         MarkdownIt("commonmark", {"html": False})
         .enable("table")
         .render(path.read_text(encoding="utf-8"))
         .replace("<a href=", '<a target="_blank" rel="noopener noreferrer" href=')
     )
+    return rendered.replace('src="/branding/', f'src="{base_path}/branding/')
 
 
 @app.get("/api/data-privacy")
-def data_privacy_notice():
+def data_privacy_notice(request: Request):
     """Return the application's supplement to the operator's privacy policy."""
     return {
         "text": DATA_PRIVACY_PATH.read_text(encoding="utf-8"),
-        "html": render_markdown(DATA_PRIVACY_PATH),
+        "html": render_markdown(DATA_PRIVACY_PATH, request_base_path(request)),
     }
 
 
 @app.get("/api/help")
-def help_document():
+def help_document(request: Request):
     """Return the in-app explanation of what the web interface does."""
     return {
         "text": HELP_PATH.read_text(encoding="utf-8"),
-        "html": render_markdown(HELP_PATH),
+        "html": render_markdown(HELP_PATH, request_base_path(request)),
     }
 
 
 @app.get("/api/about")
-def about_document():
+def about_document(request: Request):
     """Return the project description, contribution note and acknowledgement."""
     return {
         "text": ABOUT_PATH.read_text(encoding="utf-8"),
-        "html": render_markdown(ABOUT_PATH),
+        "html": render_markdown(ABOUT_PATH, request_base_path(request)),
     }
 
 
@@ -1410,7 +1476,7 @@ async def check_scenario(
         )
         session.add_run(run)
 
-    return JSONResponse(run.result(), status_code=201)
+    return JSONResponse(run.result(request_base_path(request)), status_code=201)
 
 
 @app.get("/api/runs/{run_id}")
@@ -1426,7 +1492,7 @@ async def get_run_result(request: Request, run_id: str):
         run.plots = await in_worker(
             request, _render_plots, run.checker, run.directory / "plots"
         )
-    return run.result()
+    return run.result(request_base_path(request))
 
 
 @app.get("/api/runs/{run_id}/plots/{plot_name}.png")
@@ -1458,36 +1524,65 @@ def _build_single_report(run, want_pdf):
     return reports / f"{stem}.csv"
 
 
+class SessionLockedFileResponse(FileResponse):
+    """Keep a session locked until its file has been sent completely."""
+
+    def __init__(self, *args, session_lock, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.session_lock = session_lock
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self.session_lock.release()
+
+
+async def report_response(request, builder, *builder_args, media_type, error_detail):
+    """Build and stream a report while preventing concurrent session deletion."""
+    session_lock = request.state.session.lock
+    await session_lock.acquire()
+    try:
+        path = await in_worker(request, builder, *builder_args)
+        if not path.is_file():
+            raise HTTPException(status_code=500, detail=error_detail)
+        return SessionLockedFileResponse(
+            path,
+            session_lock=session_lock,
+            media_type=media_type,
+            filename=path.name,
+        )
+    except BaseException:
+        session_lock.release()
+        raise
+
+
 @app.get("/api/runs/{run_id}/report.pdf")
 async def get_run_pdf(request: Request, run_id: str):
     """Return the PDF report of a run, generating it on first request."""
     run = get_run(request, run_id)
-    # Report building writes into the session directory, so it is serialized
-    # against DELETE /api/session the same way a check is. Costs nothing: the
-    # checker executor is a single worker, so this work is already sequential.
-    async with request.state.session.lock:
-        path = await in_worker(request, _build_single_report, run, True)
-    if not path.is_file():
-        raise HTTPException(
-            status_code=500, detail="The PDF report could not be created"
-        )
-    return FileResponse(path, media_type="application/pdf", filename=path.name)
+    return await report_response(
+        request,
+        _build_single_report,
+        run,
+        True,
+        media_type="application/pdf",
+        error_detail="The PDF report could not be created",
+    )
 
 
 @app.get("/api/runs/{run_id}/report.csv")
 async def get_run_csv(request: Request, run_id: str):
     """Return the CSV report of a run, generating it on first request."""
     run = get_run(request, run_id)
-    # Report building writes into the session directory, so it is serialized
-    # against DELETE /api/session the same way a check is. Costs nothing: the
-    # checker executor is a single worker, so this work is already sequential.
-    async with request.state.session.lock:
-        path = await in_worker(request, _build_single_report, run, False)
-    if not path.is_file():
-        raise HTTPException(
-            status_code=500, detail="The CSV report could not be created"
-        )
-    return FileResponse(path, media_type="text/csv", filename=path.name)
+    return await report_response(
+        request,
+        _build_single_report,
+        run,
+        False,
+        media_type="text/csv",
+        error_detail="The CSV report could not be created",
+    )
 
 
 def _copy_zip_member(archive, info, target, remaining):
@@ -1754,8 +1849,14 @@ async def check_batch(
             "thresholds": limits.as_dict(),
             "files": rows,
             "downloads": {
-                "pdf": f"/api/batches/{batch_id}/report.pdf",
-                "csv": f"/api/batches/{batch_id}/report.csv",
+                "pdf": application_url(
+                    f"/api/batches/{batch_id}/report.pdf",
+                    request_base_path(request),
+                ),
+                "csv": application_url(
+                    f"/api/batches/{batch_id}/report.csv",
+                    request_base_path(request),
+                ),
             },
         },
         status_code=201,
@@ -1782,32 +1883,28 @@ def _build_batch_report(batch, want_pdf):
 async def get_batch_pdf(request: Request, batch_id: str):
     """Return the aggregated PDF report of a batch."""
     batch = get_batch(request, batch_id)
-    # Report building writes into the session directory, so it is serialized
-    # against DELETE /api/session the same way a check is. Costs nothing: the
-    # checker executor is a single worker, so this work is already sequential.
-    async with request.state.session.lock:
-        path = await in_worker(request, _build_batch_report, batch, True)
-    if not path.is_file():
-        raise HTTPException(
-            status_code=500, detail="The aggregated PDF could not be created"
-        )
-    return FileResponse(path, media_type="application/pdf", filename=path.name)
+    return await report_response(
+        request,
+        _build_batch_report,
+        batch,
+        True,
+        media_type="application/pdf",
+        error_detail="The aggregated PDF could not be created",
+    )
 
 
 @app.get("/api/batches/{batch_id}/report.csv")
 async def get_batch_csv(request: Request, batch_id: str):
     """Return the aggregated CSV report of a batch."""
     batch = get_batch(request, batch_id)
-    # Report building writes into the session directory, so it is serialized
-    # against DELETE /api/session the same way a check is. Costs nothing: the
-    # checker executor is a single worker, so this work is already sequential.
-    async with request.state.session.lock:
-        path = await in_worker(request, _build_batch_report, batch, False)
-    if not path.is_file():
-        raise HTTPException(
-            status_code=500, detail="The aggregated CSV could not be created"
-        )
-    return FileResponse(path, media_type="text/csv", filename=path.name)
+    return await report_response(
+        request,
+        _build_batch_report,
+        batch,
+        False,
+        media_type="text/csv",
+        error_detail="The aggregated CSV could not be created",
+    )
 
 
 def _forget_unknown_session(request):
@@ -1859,8 +1956,34 @@ async def clear_session(request: Request):
     else:
         cleared = _forget_unknown_session(request)
     response = JSONResponse({"cleared": cleared})
-    response.delete_cookie(SESSION_COOKIE_NAME, httponly=True, samesite="lax")
+    response.delete_cookie(
+        SESSION_COOKIE_NAME,
+        path=session_cookie_path(request),
+        httponly=True,
+        samesite="lax",
+    )
     return response
+
+
+def application_with_base_path(route_application, base_path):
+    """Mount the web application below an optional URL prefix."""
+    normalized_base_path = normalize_base_path(base_path)
+    if not normalized_base_path:
+        return route_application
+    parent_application = FastAPI(
+        title="scenario-quality-checker",
+        version="0.3.0",
+        lifespan=application_lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+    )
+    parent_application.mount(normalized_base_path, route_application)
+    return parent_application
+
+
+route_app = app
+app = application_with_base_path(route_app, BASE_PATH)
 
 
 def main():
